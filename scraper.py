@@ -2,7 +2,6 @@ import argparse
 import json
 import math
 import re
-import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,13 +9,14 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import itertools
+import os
 
 import pandas as pd
 from google_play_scraper import app as fetch_app
 from google_play_scraper import search as play_search
 from tqdm import tqdm
+from pymongo import MongoClient
 
-DB_FILE = "puzzle.db"
 OUTPUT_FILE = "puzzle.xlsx"
 
 RESULTS_PER_QUERY = 250  # Play search realistically caps out around here per query
@@ -40,16 +40,92 @@ MIN_INSTALLS = 10_000
 # BASE_TERMS x MODIFIERS is expanded into many queries automatically below so you
 # don't have to hand-write hundreds of query strings.
 
+# BASE_TERMS = [
+#     "puzzle", "match 3", "block puzzle", "brain teaser", "brain training",
+#     "logic puzzle", "jigsaw", "number puzzle", "sudoku", "crossword",
+#     "tile puzzle", "physics puzzle", "escape room", "hidden object",
+#     "sliding puzzle", "bubble shooter", "merge puzzle", "picture puzzle",
+#     "riddle", "quiz", "IQ test", "spot the difference", "maze",
+#     "word search", "anagram", "connect dots", "match puzzle", "3d puzzle",
+#     "kids puzzle", "puzzle adventure",
+# ]
+# MODIFIERS = ["game", "games", "app", "free", "offline", "2 player", "for kids"]
 BASE_TERMS = [
-    "puzzle", "match 3", "block puzzle", "brain teaser", "brain training",
-    "logic puzzle", "jigsaw", "number puzzle", "sudoku", "crossword",
-    "tile puzzle", "physics puzzle", "escape room", "hidden object",
-    "sliding puzzle", "bubble shooter", "merge puzzle", "picture puzzle",
-    "riddle", "quiz", "IQ test", "spot the difference", "maze",
-    "word search", "anagram", "connect dots", "match puzzle", "3d puzzle",
-    "kids puzzle", "puzzle adventure",
+    "puzzle",
+    "puzzle game",
+    "brain teaser",
+    "brain training",
+    "brain game",
+    "logic puzzle",
+    "logic game",
+    "match 3",
+    "match puzzle",
+    "block puzzle",
+    "block game",
+    "tile puzzle",
+    "tile match",
+    "merge puzzle",
+    "color puzzle",
+    "color match",
+    "sorting puzzle",
+    "ball sort",
+    "water sort",
+    "jigsaw",
+    "jigsaw puzzle",
+    "sudoku",
+    "crossword",
+    "word puzzle",
+    "word game",
+    "word search",
+    "word connect",
+    "anagram",
+    "number puzzle",
+    "number game",
+    "2048",
+    "math puzzle",
+    "nonogram",
+    "hidden object",
+    "spot the difference",
+    "connect dots",
+    "maze",
+    "sliding puzzle",
+    "slide puzzle",
+    "pipe puzzle",
+    "flow puzzle",
+    "physics puzzle",
+    "rope puzzle",
+    "bubble shooter",
+    "bubble puzzle",
+    "marble shooter",
+    "riddle",
+    "riddle game",
+    "escape room",
+    "escape game",
+    "mystery puzzle",
+    "detective puzzle",
+    "3d puzzle",
+    "shape puzzle",
+    "pattern puzzle",
+    "kids puzzle",
+    "educational puzzle",
+    "sokoban",
+    "mahjong",
+    "solitaire",
+    "chess puzzle",
 ]
-MODIFIERS = ["game", "games", "app", "free", "offline", "2 player", "for kids"]
+
+MODIFIERS = [
+    "game",
+    "games",
+    "app",
+    "free",
+    "offline",
+    "online",
+    "2 player",
+    "multiplayer",
+    "for kids",
+    "no wifi",
+]
 SEARCH_QUERIES = sorted({
     f"{term} {modifier}".strip()
     for term, modifier in itertools.product(BASE_TERMS, MODIFIERS)
@@ -142,64 +218,72 @@ def days_since(date_obj):
 
 
 class Store:
-    def __init__(self, path):
-        self.conn = sqlite3.connect(path, check_same_thread=False)
-        self.lock = threading.Lock()
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS apps (
-                package_name TEXT PRIMARY KEY,
-                payload      TEXT,
-                ok           INTEGER,
-                fetched_at   REAL
-            )
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS expanded_devs (
-                developer_id TEXT PRIMARY KEY,
-                done_at      REAL
-            )
-            """
-        )
-        self.conn.commit()
+    def __init__(self):
+        uri = os.environ.get("MONGODB_URI")
+        if not uri:
+            raise RuntimeError("MONGODB_URI environment variable is not set")
+
+        self.client = MongoClient(uri, serverSelectionTimeoutMS=30000)
+        self.db = self.client["puzzledb"]
+        self.apps = self.db["apps"]
+        self.expanded_devs = self.db["expanded_devs"]
+
+        self.apps.create_index("package_name", unique=True)
+        self.expanded_devs.create_index("developer_id", unique=True)
+
+        self.client.admin.command("ping")
+        print("Connected to MongoDB Atlas")
 
     def known_ids(self):
-        with self.lock:
-            rows = self.conn.execute("SELECT package_name FROM apps").fetchall()
-        return {r[0] for r in rows}
+        return {
+            r["package_name"]
+            for r in self.apps.find({}, {"package_name": 1, "_id": 0})
+        }
 
     def save(self, package_name, payload, ok=True):
-        with self.lock:
-            self.conn.execute(
-                "INSERT OR REPLACE INTO apps VALUES (?,?,?,?)",
-                (package_name, json.dumps(payload) if payload else None,
-                 1 if ok else 0, time.time()),
-            )
-            self.conn.commit()
+        self.apps.update_one(
+            {"package_name": package_name},
+            {
+                "$set": {
+                    "package_name": package_name,
+                    "payload": payload,
+                    "ok": bool(ok),
+                    "fetched_at": time.time(),
+                }
+            },
+            upsert=True,
+        )
 
     def all_records(self):
-        with self.lock:
-            rows = self.conn.execute(
-                "SELECT payload FROM apps WHERE ok = 1 AND payload IS NOT NULL"
-            ).fetchall()
-        return [json.loads(r[0]) for r in rows]
+        return [
+            r["payload"]
+            for r in self.apps.find(
+                {"ok": True, "payload": {"$ne": None}},
+                {"payload": 1, "_id": 0},
+            )
+            if r.get("payload")
+        ]
 
     def expanded(self):
-        with self.lock:
-            rows = self.conn.execute(
-                "SELECT developer_id FROM expanded_devs"
-            ).fetchall()
-        return {r[0] for r in rows}
+        return {
+            r["developer_id"]
+            for r in self.expanded_devs.find({}, {"developer_id": 1, "_id": 0})
+        }
 
     def mark_expanded(self, developer_id):
-        with self.lock:
-            self.conn.execute(
-                "INSERT OR REPLACE INTO expanded_devs VALUES (?,?)",
-                (developer_id, time.time()),
-            )
-            self.conn.commit()
+        self.expanded_devs.update_one(
+            {"developer_id": developer_id},
+            {
+                "$set": {
+                    "developer_id": developer_id,
+                    "done_at": time.time(),
+                }
+            },
+            upsert=True,
+        )
+
+    def close(self):
+        self.client.close()
 
 
 def with_retry(fn, *args, **kwargs):
@@ -522,7 +606,7 @@ def main():
                          help="Skip all discovery/fetching, just rebuild the Excel from cache.")
     args = parser.parse_args()
 
-    store = Store(DB_FILE)
+    store = Store()
 
     if not args.export_only:
         run_discovery(store, args.no_expand)
@@ -544,7 +628,7 @@ def main():
     print(f"Unique developers    : {df['Developer ID'].nunique()}")
     print(f"Hot leads (score 60+): {len(hot)}")
     print(f"Excel                : {OUTPUT_FILE}")
-    print(f"Cache                : {DB_FILE}")
+    print("MongoDB              : puzzledb.apps")
     print("=" * 44)
 
 
