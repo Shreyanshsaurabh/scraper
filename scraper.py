@@ -4,58 +4,193 @@ import math
 import os
 import random
 import re
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from urllib.parse import urlparse
 
 import pandas as pd
 from google_play_scraper import app as fetch_app
 from google_play_scraper import search as play_search
+from google_play_scraper.exceptions import NotFoundError
 from pymongo import MongoClient, UpdateOne
 from tqdm import tqdm
 
 OUTPUT_FILE = "puzzle.xlsx"
+DB_NAME = os.environ.get("MONGODB_DB", "db2")
 
-TARGET_DEVELOPERS = 10_000   # stop once this many qualifying developers are found
-RESULTS_PER_QUERY = 250      # Play search caps out around here per query
-MAX_WORKERS = 6
-MAX_RETRIES = 3
-BASE_BACKOFF = 1.5
-MONGO_BATCH_SIZE = 100       # buffered writes per bulk_write call
-DB_NAME = os.environ.get("MONGODB_DB", "db2")  # MongoDB database to store data in
-
-LANG = "en"
-COUNTRY = "in"
-
+# ---- goals / filters -------------------------------------------------------
+TARGET_DEVELOPERS = 10_000
 STALE_AFTER_DAYS = 1460
 MIN_INSTALLS = 10_000
+MAX_RUNTIME_MINUTES = 330          # stop cleanly before GitHub's 6h cut-off
+
+# ---- rate limiting ---------------------------------------------------------
+# One global limiter is shared by ALL threads, so speed is controlled by
+# REQUEST_INTERVAL, not by MAX_WORKERS. Raise it if you still get throttled.
+REQUEST_INTERVAL = float(os.environ.get("REQUEST_INTERVAL", "0.6"))  # seconds per detail fetch
+SEARCH_WEIGHT = 4.0        # a search (n_hits=250) makes several HTTP calls internally
+MAX_WORKERS = 4
+MAX_RETRIES = 5
+BASE_COOLDOWN = 20         # seconds; doubles on each consecutive rate-limit strike
+MAX_COOLDOWN = 240
+MAX_STRIKES = 6            # this many strikes in a row -> assume we're blocked, stop cleanly
+
+# ---- discovery -------------------------------------------------------------
+RESULTS_PER_QUERY = 250
+LANG = "en"
+# Searched in this order; later countries only get used if the target isn't hit.
+# Different stores rank different apps, which surfaces more developers.
+SEARCH_COUNTRIES = ["in", "us", "gb", "ca", "au", "ph", "id", "pk", "bd", "za", "ng", "ae", "sg", "my"]
+
+MONGO_BATCH_SIZE = 100
 
 BASE_TERMS = [
-    "puzzle", "puzzle game", "brain teaser", "brain training", "brain game",
-    "logic puzzle", "logic game", "match 3", "match puzzle", "block puzzle",
-    "block game", "tile puzzle", "tile match", "merge puzzle", "color puzzle",
-    "color match", "sorting puzzle", "ball sort", "water sort", "jigsaw",
-    "jigsaw puzzle", "sudoku", "crossword", "word puzzle", "word game",
-    "word search", "word connect", "anagram", "number puzzle", "number game",
-    "2048", "math puzzle", "nonogram", "hidden object", "spot the difference",
-    "connect dots", "maze", "sliding puzzle", "slide puzzle", "pipe puzzle",
-    "flow puzzle", "physics puzzle", "rope puzzle", "bubble shooter",
-    "bubble puzzle", "marble shooter", "riddle", "riddle game", "escape room",
-    "escape game", "mystery puzzle", "detective puzzle", "3d puzzle",
-    "shape puzzle", "pattern puzzle", "kids puzzle", "educational puzzle",
-    "sokoban", "mahjong", "solitaire", "chess puzzle",
+    # core puzzle
+    "puzzle", "puzzle game", "brain teaser", "brain training", "brain game", "brain puzzle",
+    "brain test", "brain out", "tricky puzzle", "logic puzzle", "logic game", "logic riddles",
+    "match 3", "match puzzle", "match 3 adventure", "block puzzle", "block game", "block blast",
+    "woodoku", "wood puzzle", "hexa puzzle", "hexa sort", "tile puzzle", "tile match",
+    "tile connect", "triple tile", "triple match", "merge puzzle", "number merge", "color puzzle",
+    "color match", "color sort", "sorting puzzle", "ball sort", "water sort", "bottle sort",
+    "tube sort", "number sort", "screw puzzle", "nuts and bolts", "jigsaw", "jigsaw puzzle",
+    "jigsaw for kids", "jigsaw for adults", "photo puzzle", "art puzzle", "landscape jigsaw",
+    "tangram", "sliding puzzle", "slide puzzle", "sliding block", "15 puzzle", "sliding tile",
+    "sudoku", "sudoku classic", "sudoku 9x9", "killer sudoku", "kakuro", "nonogram", "minesweeper",
+    "crossword", "crossword puzzle", "codeword", "cryptogram", "acrostic",
+    # words / numbers / math / quiz
+    "word puzzle", "word game", "word search", "word connect", "word cookies", "word crush",
+    "word blocks", "word stack", "word scramble", "word ladder", "wordle", "hangman",
+    "anagram", "guess the word", "guess the picture", "4 pics", "spelling game",
+    "vocabulary game", "alphabet game", "number puzzle", "number game", "number match", "2048",
+    "math puzzle", "math game", "math quiz", "mental math", "multiplication game",
+    "quiz", "quiz game", "trivia", "trivia game", "general knowledge quiz", "IQ test", "riddle",
+    "riddle game", "memory game", "memory match", "matching pairs", "pair game", "memory training",
+    "concentration game", "focus game", "reflex game", "thinking game", "mind game",
+    # objects / mystery / adventure
+    "hidden object", "hidden objects mystery", "find hidden objects", "hidden numbers",
+    "seek and find", "spot the difference", "find the difference", "connect dots", "one line",
+    "draw puzzle", "draw to save", "maze", "labyrinth", "escape room", "escape game",
+    "room escape", "escape puzzle", "escape adventure", "point and click", "adventure puzzle",
+    "story puzzle", "mystery puzzle", "detective puzzle", "detective game", "murder mystery",
+    # physics / shooters / pipes
+    "pipe puzzle", "flow puzzle", "physics puzzle", "physics game", "rope puzzle", "cut the rope",
+    "chain reaction", "bubble shooter", "bubble puzzle", "bubble pop", "marble shooter", "marble",
+    "zuma", "rolling ball", "stack game", "tower building", "unblock puzzle", "unblock car",
+    "parking puzzle", "traffic puzzle", "puzzle platformer",
+    # classic / board / card
+    "mahjong", "mahjong solitaire", "mahjong connect", "onet", "solitaire", "spider solitaire",
+    "freecell", "klondike", "tetris", "brick breaker", "chess", "chess puzzle", "chess offline",
+    "checkers", "reversi", "othello", "connect four", "gomoku", "tic tac toe", "sokoban",
+    "dominoes", "domino puzzle", "ludo", "carrom", "snakes and ladders", "card game", "rummy",
+    "blackjack", "strategy puzzle", "tower defense puzzle",
+    # casual / kids / creative
+    "casual game", "arcade game", "hyper casual", "idle game", "clicker game", "gem match",
+    "jewel match", "fruit match", "fruit crush", "diamond match", "candy match", "pop it",
+    "3d puzzle", "shape puzzle", "pattern puzzle", "kids puzzle", "educational puzzle",
+    "toddler puzzle", "baby puzzle", "animal puzzle", "car puzzle", "preschool game",
+    "kids learning game", "educational game", "coloring book", "color by number",
+    "paint by number", "pixel art", "drawing game", "diamond painting", "puzzle for adults",
 ]
 
 MODIFIERS = [
-    "game", "games", "app", "free", "offline", "online",
-    "2 player", "multiplayer", "for kids", "no wifi",
+    "", "game", "games", "app", "free", "offline", "online", "2 player", "multiplayer",
+    "for kids", "for adults", "no wifi", "classic", "new", "best", "hd", "3d", "pro",
+    "master", "challenge", "levels", "adventure", "fun", "casual", "relaxing",
 ]
 
 SEARCH_QUERIES = sorted({
     f"{term} {modifier}".strip()
     for term, modifier in itertools.product(BASE_TERMS, MODIFIERS)
 })
+
+
+# --------------------------------------------------------------------------
+# rate limiting
+# --------------------------------------------------------------------------
+
+class BlockedError(Exception):
+    """Raised when Play keeps throttling us and we should stop for now."""
+
+
+_RATE_LIMIT_RE = re.compile(
+    r"\b(429|503|403)\b|too many|rate.?limit|quota|captcha|unusual traffic|"
+    r"timed out|timeout|connection (reset|aborted|refused)|remote end closed|temporar",
+    re.I,
+)
+
+
+def looks_rate_limited(exc):
+    return bool(_RATE_LIMIT_RE.search(str(exc)))
+
+
+def is_not_found(exc):
+    if isinstance(exc, NotFoundError):
+        return True
+    message = str(exc).lower()
+    return "not found" in message or "404" in message
+
+
+class RateLimiter:
+    """Thread-safe: spaces requests out globally, adds jitter, and backs off
+    exponentially when Google starts throttling."""
+
+    def __init__(self, interval):
+        self.interval = interval
+        self.lock = threading.Lock()
+        self.next_slot = 0.0
+        self.cooldown_until = 0.0
+        self.strikes = 0
+        self.blocked = False
+
+    def wait(self, weight=1.0):
+        with self.lock:
+            now = time.monotonic()
+            start = max(now, self.next_slot, self.cooldown_until)
+            self.next_slot = start + self.interval * weight * random.uniform(0.8, 1.4)
+        if start > now:
+            time.sleep(start - now)
+
+    def success(self):
+        with self.lock:
+            if self.strikes > 0:
+                self.strikes -= 1
+
+    def failure(self, exc):
+        rate_limited = looks_rate_limited(exc)
+        cooldown = 2.0
+        with self.lock:
+            if rate_limited:
+                self.strikes += 1
+                cooldown = min(MAX_COOLDOWN, BASE_COOLDOWN * 2 ** (self.strikes - 1))
+                if self.strikes >= MAX_STRIKES:
+                    self.blocked = True
+            self.cooldown_until = max(self.cooldown_until, time.monotonic() + cooldown)
+            strikes = self.strikes
+        if rate_limited:
+            tqdm.write(f"  rate limited (strike {strikes}/{MAX_STRIKES}) - cooling down {cooldown:.0f}s")
+
+
+LIMITER = RateLimiter(REQUEST_INTERVAL)
+
+
+def with_retry(fn, *args, weight=1.0, **kwargs):
+    last_error = None
+    for _ in range(MAX_RETRIES):
+        if LIMITER.blocked:
+            raise BlockedError("too many rate-limit strikes")
+        LIMITER.wait(weight)
+        try:
+            result = fn(*args, **kwargs)
+        except Exception as exc:
+            if is_not_found(exc):
+                raise
+            last_error = exc
+            LIMITER.failure(exc)
+            continue
+        LIMITER.success()
+        return result
+    raise last_error
 
 
 # --------------------------------------------------------------------------
@@ -119,13 +254,8 @@ def qualifies(record):
 # --------------------------------------------------------------------------
 
 class Store:
-    """MongoDB-backed cache.
-
-    Everything we need for hot-path lookups (known package names, qualified
-    developer IDs) is loaded ONCE at startup and kept in memory. Writes are
-    buffered and sent with bulk_write, so we make a handful of round trips
-    instead of one per app.
-    """
+    """MongoDB-backed cache. Known apps and qualified developers are loaded
+    into memory once; writes are buffered and sent with bulk_write."""
 
     def __init__(self):
         uri = os.environ.get("MONGODB_URI")
@@ -137,7 +267,7 @@ class Store:
         self.apps = self.db["apps"]
         self.apps.create_index("package_name", unique=True)
         self.client.admin.command("ping")
-        print("Connected to MongoDB Atlas")
+        print(f"Connected to MongoDB Atlas (database: {DB_NAME})")
 
         self.known = set()
         self.qualified_devs = set()
@@ -145,11 +275,19 @@ class Store:
         self._load_state()
 
     def _load_state(self):
-        for r in self.apps.find({}, {"package_name": 1, "payload": 1, "_id": 0}):
+        retry_count = 0
+        for r in self.apps.find({}, {"package_name": 1, "payload": 1, "ok": 1, "_id": 0}):
+            if r.get("ok") is False:
+                # Older runs stored rate-limited fetches as "failed" forever.
+                # Leave them out of `known` so they get fetched again.
+                retry_count += 1
+                continue
             self.known.add(r["package_name"])
             payload = r.get("payload")
             if payload and payload.get("developerId") and qualifies(payload):
                 self.qualified_devs.add(str(payload["developerId"]))
+        if retry_count:
+            print(f"Will retry {retry_count} apps that previously failed.")
 
     def save(self, package_name, payload, ok=True):
         self.known.add(package_name)
@@ -193,20 +331,6 @@ class Store:
 # fetching / discovery
 # --------------------------------------------------------------------------
 
-def with_retry(fn, *args, **kwargs):
-    last_error = None
-    for attempt in range(MAX_RETRIES):
-        try:
-            return fn(*args, **kwargs)
-        except Exception as exc:
-            last_error = exc
-            message = str(exc).lower()
-            if "not found" in message or "404" in message:
-                raise
-            time.sleep(BASE_BACKOFF * (2 ** attempt))
-    raise last_error
-
-
 KEEP_FIELDS = (
     "title", "url", "appId", "realInstalls", "installs", "containsAds",
     "offersIAP", "genre", "genreId", "score", "ratings", "reviews",
@@ -216,48 +340,65 @@ KEEP_FIELDS = (
 )
 
 
-def fetch_one(package_name):
-    details = with_retry(fetch_app, package_name, lang=LANG, country=COUNTRY)
+def fetch_one(package_name, country):
+    details = with_retry(fetch_app, package_name, lang=LANG, country=country)
     return {k: details.get(k) for k in KEEP_FIELDS}
 
 
-def fetch_many(package_names, store):
+def fetch_many(package_names, store, country):
     if not package_names:
         return
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        futures = {pool.submit(fetch_one, p): p for p in package_names}
+        futures = {pool.submit(fetch_one, p, country): p for p in package_names}
         for future in as_completed(futures):
             package_name = futures[future]
             try:
                 store.save(package_name, future.result(), ok=True)
-            except Exception:
-                store.save(package_name, None, ok=False)
+            except BlockedError:
+                pass  # not saved -> will be retried on the next run
+            except Exception as exc:
+                if is_not_found(exc):
+                    store.save(package_name, None, ok=False)
+                # any other error is treated as transient: not saved, retried later
 
 
-def run_discovery(store, target_devs):
-    """Run search queries one by one. For each query, fetch full details only
-    for apps we haven't seen AND whose developer isn't already qualified.
-    Stops as soon as `target_devs` qualifying developers are collected."""
-    print(f"\nCache: {len(store.known)} apps, "
-          f"{len(store.qualified_devs)} qualifying developers already.")
-    print(f"Target: {target_devs} developers | {len(SEARCH_QUERIES)} queries available.\n")
+def run_discovery(store, target_devs, deadline):
+    jobs = []
+    for country in SEARCH_COUNTRIES:
+        queries = SEARCH_QUERIES[:]
+        random.shuffle(queries)
+        jobs.extend((query, country) for query in queries)
 
-    queries = SEARCH_QUERIES[:]
-    random.shuffle(queries)  # spread across puzzle types instead of alphabetical order
+    print(f"\nCache: {len(store.known)} apps, {len(store.qualified_devs)} qualifying developers.")
+    print(f"Target: {target_devs} developers | {len(SEARCH_QUERIES)} queries x "
+          f"{len(SEARCH_COUNTRIES)} countries = {len(jobs)} searches available.")
+    print(f"Pace: ~1 request every {REQUEST_INTERVAL}s (searches count x{SEARCH_WEIGHT:g}).\n")
 
-    bar = tqdm(queries, desc="Searching")
-    for query in bar:
+    stop_reason = "ran out of queries"
+    bar = tqdm(jobs, desc="Searching")
+    for query, country in bar:
         if len(store.qualified_devs) >= target_devs:
+            stop_reason = "target reached"
+            break
+        if LIMITER.blocked:
+            stop_reason = "Google Play is rate-limiting this IP"
+            break
+        if time.monotonic() >= deadline:
+            stop_reason = "time limit reached"
             break
 
         try:
             results = with_retry(
                 play_search, query,
-                lang=LANG, country=COUNTRY, n_hits=RESULTS_PER_QUERY,
+                lang=LANG, country=country, n_hits=RESULTS_PER_QUERY,
+                weight=SEARCH_WEIGHT,
             )
+        except BlockedError:
+            stop_reason = "Google Play is rate-limiting this IP"
+            break
         except Exception as exc:
-            tqdm.write(f"  search failed: {query!r} -> {exc}")
+            tqdm.write(f"  search failed: {query!r} [{country}] -> {exc}")
             continue
 
         candidates = []
@@ -270,19 +411,18 @@ def run_discovery(store, target_devs):
                 continue  # already have this developer, skip the extra fetch
             candidates.append(package_name)
 
-        fetch_many(candidates, store)
+        fetch_many(candidates, store, country)
         store.flush()
 
-        bar.set_postfix(devs=len(store.qualified_devs), apps=len(store.known))
-        time.sleep(0.3)
+        bar.set_postfix(devs=len(store.qualified_devs), apps=len(store.known), cc=country)
 
     bar.close()
+    store.flush()
 
-    if len(store.qualified_devs) >= target_devs:
-        print(f"\nReached target: {len(store.qualified_devs)} developers.")
-    else:
-        print(f"\nRan out of queries at {len(store.qualified_devs)} developers "
-              f"(target {target_devs}). Add more BASE_TERMS / MODIFIERS to go further.")
+    print(f"\nDiscovery stopped: {stop_reason}. "
+          f"Qualifying developers: {len(store.qualified_devs)} / {target_devs}.")
+    if stop_reason != "target reached":
+        print("Progress is saved in MongoDB - run again to continue where this left off.")
 
 
 # --------------------------------------------------------------------------
@@ -468,15 +608,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-devs", type=int, default=TARGET_DEVELOPERS,
                         help="Stop discovery once this many qualifying developers are found.")
+    parser.add_argument("--max-minutes", type=float, default=MAX_RUNTIME_MINUTES,
+                        help="Stop discovery after this many minutes so the Excel still gets exported.")
     parser.add_argument("--export-only", action="store_true",
                         help="Skip all discovery/fetching, just rebuild the Excel from cache.")
     args = parser.parse_args()
 
     store = Store()
+    deadline = time.monotonic() + args.max_minutes * 60
 
     try:
         if not args.export_only:
-            run_discovery(store, args.target_devs)
+            run_discovery(store, args.target_devs, deadline)
     finally:
         store.flush()  # make sure buffered writes survive Ctrl+C / errors
 
