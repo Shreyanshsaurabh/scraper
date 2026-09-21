@@ -1,28 +1,28 @@
 import argparse
-import json
+import itertools
 import math
+import os
+import random
 import re
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-import itertools
-import os
-
 import pandas as pd
 from google_play_scraper import app as fetch_app
 from google_play_scraper import search as play_search
+from pymongo import MongoClient, UpdateOne
 from tqdm import tqdm
-from pymongo import MongoClient
 
 OUTPUT_FILE = "puzzle.xlsx"
 
-RESULTS_PER_QUERY = 250  # Play search realistically caps out around here per query
-MAX_WORKERS = 4
+TARGET_DEVELOPERS = 10_000   # stop once this many qualifying developers are found
+RESULTS_PER_QUERY = 250      # Play search caps out around here per query
+MAX_WORKERS = 6
 MAX_RETRIES = 3
 BASE_BACKOFF = 1.5
+MONGO_BATCH_SIZE = 100       # buffered writes per bulk_write call
 
 LANG = "en"
 COUNTRY = "in"
@@ -30,152 +30,36 @@ COUNTRY = "in"
 STALE_AFTER_DAYS = 1460
 MIN_INSTALLS = 10_000
 
-# One query only gets you ~200-250 results from Play's search backend, no matter
-# what n_hits is set to (this is a server-side cap, not something the library or
-# n_hits controls). This installed version of google_play_scraper also has no
-# `list` (charts) or `similar` endpoint -- only app, search, reviews, permissions.
-# So the only levers available are: (a) many distinct search queries, and
-# (b) re-searching by developer name to pull the rest of their catalog.
-#
-# BASE_TERMS x MODIFIERS is expanded into many queries automatically below so you
-# don't have to hand-write hundreds of query strings.
-
-# BASE_TERMS = [
-#     "puzzle", "match 3", "block puzzle", "brain teaser", "brain training",
-#     "logic puzzle", "jigsaw", "number puzzle", "sudoku", "crossword",
-#     "tile puzzle", "physics puzzle", "escape room", "hidden object",
-#     "sliding puzzle", "bubble shooter", "merge puzzle", "picture puzzle",
-#     "riddle", "quiz", "IQ test", "spot the difference", "maze",
-#     "word search", "anagram", "connect dots", "match puzzle", "3d puzzle",
-#     "kids puzzle", "puzzle adventure",
-# ]
-# MODIFIERS = ["game", "games", "app", "free", "offline", "2 player", "for kids"]
 BASE_TERMS = [
-    "puzzle",
-    "puzzle game",
-    "brain teaser",
-    "brain training",
-    "brain game",
-    "logic puzzle",
-    "logic game",
-    "match 3",
-    "match puzzle",
-    "block puzzle",
-    "block game",
-    "tile puzzle",
-    "tile match",
-    "merge puzzle",
-    "color puzzle",
-    "color match",
-    "sorting puzzle",
-    "ball sort",
-    "water sort",
-    "jigsaw",
-    "jigsaw puzzle",
-    "sudoku",
-    "crossword",
-    "word puzzle",
-    "word game",
-    "word search",
-    "word connect",
-    "anagram",
-    "number puzzle",
-    "number game",
-    "2048",
-    "math puzzle",
-    "nonogram",
-    "hidden object",
-    "spot the difference",
-    "connect dots",
-    "maze",
-    "sliding puzzle",
-    "slide puzzle",
-    "pipe puzzle",
-    "flow puzzle",
-    "physics puzzle",
-    "rope puzzle",
-    "bubble shooter",
-    "bubble puzzle",
-    "marble shooter",
-    "riddle",
-    "riddle game",
-    "escape room",
-    "escape game",
-    "mystery puzzle",
-    "detective puzzle",
-    "3d puzzle",
-    "shape puzzle",
-    "pattern puzzle",
-    "kids puzzle",
-    "educational puzzle",
-    "sokoban",
-    "mahjong",
-    "solitaire",
-    "chess puzzle",
+    "puzzle", "puzzle game", "brain teaser", "brain training", "brain game",
+    "logic puzzle", "logic game", "match 3", "match puzzle", "block puzzle",
+    "block game", "tile puzzle", "tile match", "merge puzzle", "color puzzle",
+    "color match", "sorting puzzle", "ball sort", "water sort", "jigsaw",
+    "jigsaw puzzle", "sudoku", "crossword", "word puzzle", "word game",
+    "word search", "word connect", "anagram", "number puzzle", "number game",
+    "2048", "math puzzle", "nonogram", "hidden object", "spot the difference",
+    "connect dots", "maze", "sliding puzzle", "slide puzzle", "pipe puzzle",
+    "flow puzzle", "physics puzzle", "rope puzzle", "bubble shooter",
+    "bubble puzzle", "marble shooter", "riddle", "riddle game", "escape room",
+    "escape game", "mystery puzzle", "detective puzzle", "3d puzzle",
+    "shape puzzle", "pattern puzzle", "kids puzzle", "educational puzzle",
+    "sokoban", "mahjong", "solitaire", "chess puzzle",
 ]
 
 MODIFIERS = [
-    "game",
-    "games",
-    "app",
-    "free",
-    "offline",
-    "online",
-    "2 player",
-    "multiplayer",
-    "for kids",
-    "no wifi",
+    "game", "games", "app", "free", "offline", "online",
+    "2 player", "multiplayer", "for kids", "no wifi",
 ]
+
 SEARCH_QUERIES = sorted({
     f"{term} {modifier}".strip()
     for term, modifier in itertools.product(BASE_TERMS, MODIFIERS)
 })
 
-MAX_DISCOVERY_ROUNDS = 6  # how many developer-catalog expansion passes to run
 
-INDIA_PLACE_KEYWORDS = [
-    "india", "indian", "bharat", "new delhi", "delhi", "mumbai", "bombay",
-    "bangalore", "bengaluru", "hyderabad", "chennai", "kolkata", "calcutta",
-    "pune", "ahmedabad", "surat", "jaipur", "lucknow", "kanpur", "nagpur",
-    "indore", "bhopal", "patna", "chandigarh", "kochi", "coimbatore",
-    "noida", "gurgaon", "gurugram", "ghaziabad", "faridabad", "vadodara",
-    "rajkot", "nashik", "thane", "visakhapatnam", "vijayawada", "mysore",
-    "mysuru", "madurai", "trichy", "thiruvananthapuram", "guwahati",
-    "bhubaneswar", "raipur", "ranchi", "dehradun", "jodhpur", "udaipur",
-    "kerala", "karnataka", "maharashtra", "telangana", "tamil nadu",
-    "west bengal", "uttar pradesh", "rajasthan", "gujarat", "punjab",
-    "bihar", "odisha", "jharkhand", "assam", "haryana", "madhya pradesh",
-    "andhra pradesh", "chhattisgarh", "uttarakhand", "himachal pradesh",
-    "goa",
-]
-
-_NEGATIVE_HINTS = re.compile(r"\b(indiana|indianapolis)\b", re.I)
-_PLACE_RE = re.compile(
-    r"\b(" + "|".join(re.escape(k) for k in INDIA_PLACE_KEYWORDS) + r")\b",
-    re.I,
-)
-_PIN_RE = re.compile(r"\b[1-9][0-9]{5}\b")
-
-
-def is_indian_developer(address, website=""):
-    addr = str(address or "")
-
-    if addr:
-        if _NEGATIVE_HINTS.search(addr) and not _PLACE_RE.search(
-            _NEGATIVE_HINTS.sub("", addr)
-        ):
-            return False
-        if _PLACE_RE.search(addr):
-            return True
-        if _PIN_RE.search(addr):
-            return True
-
-    host = (urlparse(str(website or "")).hostname or "").lower()
-    if host.endswith(".in") or host.endswith(".co.in") or host.endswith(".org.in"):
-        return True
-
-    return False
-
+# --------------------------------------------------------------------------
+# helpers
+# --------------------------------------------------------------------------
 
 def normalize_downloads(real_installs, installs_str=""):
     if real_installs:
@@ -217,7 +101,31 @@ def days_since(date_obj):
     return (datetime.now(timezone.utc).date() - date_obj).days
 
 
+def qualifies(record):
+    """Same filters as build_dataframe, so the developer count we stop on
+    matches what ends up in the Excel file."""
+    installs = normalize_downloads(record.get("realInstalls"), record.get("installs"))
+    if installs < MIN_INSTALLS:
+        return False
+    if not (record.get("containsAds") or record.get("adSupported")):
+        return False
+    age = days_since(epoch_to_date(record.get("updated")))
+    return age is None or age <= STALE_AFTER_DAYS
+
+
+# --------------------------------------------------------------------------
+# storage
+# --------------------------------------------------------------------------
+
 class Store:
+    """MongoDB-backed cache.
+
+    Everything we need for hot-path lookups (known package names, qualified
+    developer IDs) is loaded ONCE at startup and kept in memory. Writes are
+    buffered and sent with bulk_write, so we make a handful of round trips
+    instead of one per app.
+    """
+
     def __init__(self):
         uri = os.environ.get("MONGODB_URI")
         if not uri:
@@ -226,33 +134,44 @@ class Store:
         self.client = MongoClient(uri, serverSelectionTimeoutMS=30000)
         self.db = self.client["puzzledb"]
         self.apps = self.db["apps"]
-        self.expanded_devs = self.db["expanded_devs"]
-
         self.apps.create_index("package_name", unique=True)
-        self.expanded_devs.create_index("developer_id", unique=True)
-
         self.client.admin.command("ping")
         print("Connected to MongoDB Atlas")
 
-    def known_ids(self):
-        return {
-            r["package_name"]
-            for r in self.apps.find({}, {"package_name": 1, "_id": 0})
-        }
+        self.known = set()
+        self.qualified_devs = set()
+        self._buffer = []
+        self._load_state()
+
+    def _load_state(self):
+        for r in self.apps.find({}, {"package_name": 1, "payload": 1, "_id": 0}):
+            self.known.add(r["package_name"])
+            payload = r.get("payload")
+            if payload and payload.get("developerId") and qualifies(payload):
+                self.qualified_devs.add(str(payload["developerId"]))
 
     def save(self, package_name, payload, ok=True):
-        self.apps.update_one(
+        self.known.add(package_name)
+        if ok and payload and payload.get("developerId") and qualifies(payload):
+            self.qualified_devs.add(str(payload["developerId"]))
+
+        self._buffer.append(UpdateOne(
             {"package_name": package_name},
-            {
-                "$set": {
-                    "package_name": package_name,
-                    "payload": payload,
-                    "ok": bool(ok),
-                    "fetched_at": time.time(),
-                }
-            },
+            {"$set": {
+                "package_name": package_name,
+                "payload": payload,
+                "ok": bool(ok),
+                "fetched_at": time.time(),
+            }},
             upsert=True,
-        )
+        ))
+        if len(self._buffer) >= MONGO_BATCH_SIZE:
+            self.flush()
+
+    def flush(self):
+        if self._buffer:
+            self.apps.bulk_write(self._buffer, ordered=False)
+            self._buffer = []
 
     def all_records(self):
         return [
@@ -264,27 +183,14 @@ class Store:
             if r.get("payload")
         ]
 
-    def expanded(self):
-        return {
-            r["developer_id"]
-            for r in self.expanded_devs.find({}, {"developer_id": 1, "_id": 0})
-        }
-
-    def mark_expanded(self, developer_id):
-        self.expanded_devs.update_one(
-            {"developer_id": developer_id},
-            {
-                "$set": {
-                    "developer_id": developer_id,
-                    "done_at": time.time(),
-                }
-            },
-            upsert=True,
-        )
-
     def close(self):
+        self.flush()
         self.client.close()
 
+
+# --------------------------------------------------------------------------
+# fetching / discovery
+# --------------------------------------------------------------------------
 
 def with_retry(fn, *args, **kwargs):
     last_error = None
@@ -314,14 +220,13 @@ def fetch_one(package_name):
     return {k: details.get(k) for k in KEEP_FIELDS}
 
 
-def fetch_many(package_names, store, desc="Fetching apps"):
-    todo = [p for p in package_names if p not in store.known_ids()]
-    if not todo:
+def fetch_many(package_names, store):
+    if not package_names:
         return
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        futures = {pool.submit(fetch_one, p): p for p in todo}
-        for future in tqdm(as_completed(futures), total=len(futures), desc=desc):
+        futures = {pool.submit(fetch_one, p): p for p in package_names}
+        for future in as_completed(futures):
             package_name = futures[future]
             try:
                 store.save(package_name, future.result(), ok=True)
@@ -329,12 +234,22 @@ def fetch_many(package_names, store, desc="Fetching apps"):
                 store.save(package_name, None, ok=False)
 
 
-def discover_from_queries():
-    """Search discovery. Each distinct query yields its own ~200-250 result
-    batch (Play's search backend caps out there regardless of n_hits), so we
-    lean on having many varied queries rather than one huge n_hits value."""
-    found = set()
-    for query in tqdm(SEARCH_QUERIES, desc="Searching"):
+def run_discovery(store, target_devs):
+    """Run search queries one by one. For each query, fetch full details only
+    for apps we haven't seen AND whose developer isn't already qualified.
+    Stops as soon as `target_devs` qualifying developers are collected."""
+    print(f"\nCache: {len(store.known)} apps, "
+          f"{len(store.qualified_devs)} qualifying developers already.")
+    print(f"Target: {target_devs} developers | {len(SEARCH_QUERIES)} queries available.\n")
+
+    queries = SEARCH_QUERIES[:]
+    random.shuffle(queries)  # spread across puzzle types instead of alphabetical order
+
+    bar = tqdm(queries, desc="Searching")
+    for query in bar:
+        if len(store.qualified_devs) >= target_devs:
+            break
+
         try:
             results = with_retry(
                 play_search, query,
@@ -344,82 +259,34 @@ def discover_from_queries():
             tqdm.write(f"  search failed: {query!r} -> {exc}")
             continue
 
+        candidates = []
         for result in results:
             package_name = result.get("appId")
-            if package_name:
-                found.add(package_name)
-        time.sleep(0.4)
-
-    return found
-
-
-def expand_developer_catalogs(store):
-    records = store.all_records()
-    already = store.expanded()
-
-    targets = {}
-    for record in records:
-        developer_id = str(record.get("developerId") or "")
-        name = record.get("developer")
-        if developer_id and name and developer_id not in already:
-            targets[developer_id] = name
-
-    if not targets:
-        return set()
-
-    new_ids = set()
-    known = store.known_ids()
-
-    for developer_id, name in tqdm(targets.items(), desc="Expanding developers"):
-        try:
-            results = with_retry(
-                play_search, f'"{name}"',
-                lang=LANG, country=COUNTRY, n_hits=RESULTS_PER_QUERY,
-            )
-        except Exception as exc:
-            tqdm.write(f"  expand failed: {name!r} -> {exc}")
-            continue
-
-        for result in results:
-            if str(result.get("developer") or "").strip().lower() != name.strip().lower():
+            if not package_name or package_name in store.known:
                 continue
-            package_name = result.get("appId")
-            if package_name and package_name not in known:
-                new_ids.add(package_name)
+            dev_id = str(result.get("developerId") or "")
+            if dev_id and dev_id in store.qualified_devs:
+                continue  # already have this developer, skip the extra fetch
+            candidates.append(package_name)
 
-        store.mark_expanded(developer_id)
-        time.sleep(0.4)
+        fetch_many(candidates, store)
+        store.flush()
 
-    return new_ids
+        bar.set_postfix(devs=len(store.qualified_devs), apps=len(store.known))
+        time.sleep(0.3)
+
+    bar.close()
+
+    if len(store.qualified_devs) >= target_devs:
+        print(f"\nReached target: {len(store.qualified_devs)} developers.")
+    else:
+        print(f"\nRan out of queries at {len(store.qualified_devs)} developers "
+              f"(target {target_devs}). Add more BASE_TERMS / MODIFIERS to go further.")
 
 
-def run_discovery(store, no_expand):
-    """Round 0: seed from many distinct search queries (each query gets its own
-    ~200-250 result batch from Play's search backend, since that cap applies
-    per-query regardless of n_hits). Then iteratively expand via developer
-    catalogs -- re-searching each developer's name to surface their other
-    apps -- until nothing new turns up or we hit MAX_DISCOVERY_ROUNDS."""
-    print(f"\nCache holds {len(store.known_ids())} apps already.\n")
-    print(f"Running {len(SEARCH_QUERIES)} search queries this pass.\n")
-
-    seed = discover_from_queries()
-    print(f"\nInitial search discovery surfaced {len(seed)} unique package names.")
-    fetch_many(seed, store, desc="Fetching seed app details")
-
-    if no_expand:
-        return
-
-    for round_num in range(1, MAX_DISCOVERY_ROUNDS + 1):
-        dev_new = expand_developer_catalogs(store)
-        fetch_many(dev_new, store, desc=f"Fetching dev-expanded apps (round {round_num})")
-
-        print(f"\nRound {round_num}: +{len(dev_new)} from developer catalogs. "
-              f"Cache now {len(store.known_ids())} apps.")
-
-        if not dev_new:
-            print("No new apps found — discovery has plateaued.")
-            break
-
+# --------------------------------------------------------------------------
+# scoring / export
+# --------------------------------------------------------------------------
 
 def lead_score(row):
     score = 0.0
@@ -461,7 +328,6 @@ def build_dataframe(store):
     rows = []
 
     for record in store.all_records():
-
         package_name = record.get("appId")
         updated = epoch_to_date(record.get("updated"))
         contains_ads = bool(record.get("containsAds") or record.get("adSupported"))
@@ -582,7 +448,6 @@ def autoformat(worksheet, df, link_column=None):
 
 
 def export(df):
-    df = df[df["Contains Ads"] == "Yes"]
     developers = build_developer_sheet(df)
     hot = df[(df["Lead Score"] >= 60) & (df["Developer Email"] != "")]
 
@@ -600,21 +465,25 @@ def export(df):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--no-expand", action="store_true",
-                         help="Skip developer-catalog and similar-apps expansion rounds.")
+    parser.add_argument("--target-devs", type=int, default=TARGET_DEVELOPERS,
+                        help="Stop discovery once this many qualifying developers are found.")
     parser.add_argument("--export-only", action="store_true",
-                         help="Skip all discovery/fetching, just rebuild the Excel from cache.")
+                        help="Skip all discovery/fetching, just rebuild the Excel from cache.")
     args = parser.parse_args()
 
     store = Store()
 
-    if not args.export_only:
-        run_discovery(store, args.no_expand)
+    try:
+        if not args.export_only:
+            run_discovery(store, args.target_devs)
+    finally:
+        store.flush()  # make sure buffered writes survive Ctrl+C / errors
 
     df = build_dataframe(store)
 
     if df.empty:
         print("\nNo qualifying apps found.")
+        store.close()
         return
 
     hot, developers = export(df)
@@ -622,14 +491,15 @@ def main():
     print("\n" + "=" * 44)
     print("SCRAPING COMPLETE")
     print("=" * 44)
-    print(f"Apps cached          : {len(store.known_ids())}")
+    print(f"Apps cached          : {len(store.known)}")
     print(f"Apps kept            : {len(df)}")
-    print(f"  ...with ads        : {(df['Contains Ads'] == 'Yes').sum()}")
     print(f"Unique developers    : {df['Developer ID'].nunique()}")
     print(f"Hot leads (score 60+): {len(hot)}")
     print(f"Excel                : {OUTPUT_FILE}")
     print("MongoDB              : puzzledb.apps")
     print("=" * 44)
+
+    store.close()
 
 
 if __name__ == "__main__":
