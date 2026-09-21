@@ -31,17 +31,20 @@ MAX_RUNTIME_MINUTES = 330          # stop cleanly before GitHub's 6h cut-off
 REQUEST_INTERVAL = float(os.environ.get("REQUEST_INTERVAL", "0.6"))  # seconds per detail fetch
 SEARCH_WEIGHT = 4.0        # a search (n_hits=250) makes several HTTP calls internally
 MAX_WORKERS = 4
-MAX_RETRIES = 5
-BASE_COOLDOWN = 20         # seconds; doubles on each consecutive rate-limit strike
+MAX_RETRIES = 4            # retries for NON rate-limit errors (rate limits are waited out, not counted)
+BASE_COOLDOWN = 20         # seconds; doubles on each new rate-limit strike
 MAX_COOLDOWN = 240
-MAX_STRIKES = 6            # this many strikes in a row -> assume we're blocked, stop cleanly
+MAX_INTERVAL = 4.0         # the pace never slows past 1 request / 4s
+MAX_STRIKES = 6            # this many separate throttle events in a row -> assume blocked, stop cleanly
 
 # ---- discovery -------------------------------------------------------------
 RESULTS_PER_QUERY = 250
 LANG = "en"
-# Searched in this order; later countries only get used if the target isn't hit.
-# Different stores rank different apps, which surfaces more developers.
-SEARCH_COUNTRIES = ["in", "us", "gb", "ca", "au", "ph", "id", "pk", "bd", "za", "ng", "ae", "sg", "my"]
+MAX_SEARCHES = 1000        # hard cap on total search queries per run (see --max-searches)
+# Countries are searched in this order, and the MAX_SEARCHES cap applies to the
+# whole list. With ~2,600 queries per country, 1000 searches never get past the
+# first country, so extras only matter if you raise the cap.
+SEARCH_COUNTRIES = ["in"]  # e.g. ["in", "us", "gb"] for more variety
 
 MONGO_BATCH_SIZE = 100
 
@@ -50,31 +53,52 @@ BASE_TERMS = [
     "puzzle", "puzzle game", "brain teaser", "brain training", "brain game", "brain puzzle",
     "brain test", "brain out", "tricky puzzle", "logic puzzle", "logic game", "logic riddles",
     "match 3", "match puzzle", "match 3 adventure", "block puzzle", "block game", "block blast",
-    "woodoku", "kakuro", "nonogram", "minesweeper",
+    "woodoku", "wood puzzle", "hexa puzzle", "hexa sort", "tile puzzle", "tile match",
+    "tile connect", "triple tile", "triple match", "merge puzzle", "number merge", "color puzzle",
+    "color match", "color sort", "sorting puzzle", "ball sort", "water sort", "bottle sort",
+    "tube sort", "number sort", "screw puzzle", "nuts and bolts", "jigsaw", "jigsaw puzzle",
+    "jigsaw for kids", "jigsaw for adults", "photo puzzle", "art puzzle", "landscape jigsaw",
+    "tangram", "sliding puzzle", "slide puzzle", "sliding block", "15 puzzle", "sliding tile",
+    "sudoku", "sudoku classic", "sudoku 9x9", "killer sudoku", "kakuro", "nonogram", "minesweeper",
     "crossword", "crossword puzzle", "codeword", "cryptogram", "acrostic",
     # words / numbers / math / quiz
     "word puzzle", "word game", "word search", "word connect", "word cookies", "word crush",
     "word blocks", "word stack", "word scramble", "word ladder", "wordle", "hangman",
-    "anagram", "guess the word", "memory training",
+    "anagram", "guess the word", "guess the picture", "4 pics", "spelling game",
+    "vocabulary game", "alphabet game", "number puzzle", "number game", "number match", "2048",
+    "math puzzle", "math game", "math quiz", "mental math", "multiplication game",
+    "quiz", "quiz game", "trivia", "trivia game", "general knowledge quiz", "IQ test", "riddle",
+    "riddle game", "memory game", "memory match", "matching pairs", "pair game", "memory training",
     "concentration game", "focus game", "reflex game", "thinking game", "mind game",
     # objects / mystery / adventure
-    "hidden object", "point and click", "adventure puzzle",
+    "hidden object", "hidden objects mystery", "find hidden objects", "hidden numbers",
+    "seek and find", "spot the difference", "find the difference", "connect dots", "one line",
+    "draw puzzle", "draw to save", "maze", "labyrinth", "escape room", "escape game",
+    "room escape", "escape puzzle", "escape adventure", "point and click", "adventure puzzle",
     "story puzzle", "mystery puzzle", "detective puzzle", "detective game", "murder mystery",
     # physics / shooters / pipes
     "pipe puzzle", "flow puzzle", "physics puzzle", "physics game", "rope puzzle", "cut the rope",
-    "chain reaction",
+    "chain reaction", "bubble shooter", "bubble puzzle", "bubble pop", "marble shooter", "marble",
+    "zuma", "rolling ball", "stack game", "tower building", "unblock puzzle", "unblock car",
+    "parking puzzle", "traffic puzzle", "puzzle platformer",
     # classic / board / card
-    "mahjong", "rummy",
+    "mahjong", "mahjong solitaire", "mahjong connect", "onet", "solitaire", "spider solitaire",
+    "freecell", "klondike", "tetris", "brick breaker", "chess", "chess puzzle", "chess offline",
+    "checkers", "reversi", "othello", "connect four", "gomoku", "tic tac toe", "sokoban",
+    "dominoes", "domino puzzle", "ludo", "carrom", "snakes and ladders", "card game", "rummy",
     "blackjack", "strategy puzzle", "tower defense puzzle",
     # casual / kids / creative
-    "casual game",
+    "casual game", "arcade game", "hyper casual", "idle game", "clicker game", "gem match",
+    "jewel match", "fruit match", "fruit crush", "diamond match", "candy match", "pop it",
+    "3d puzzle", "shape puzzle", "pattern puzzle", "kids puzzle", "educational puzzle",
+    "toddler puzzle", "baby puzzle", "animal puzzle", "car puzzle", "preschool game",
+    "kids learning game", "educational game", "coloring book", "color by number",
     "paint by number", "pixel art", "drawing game", "diamond painting", "puzzle for adults",
 ]
 
 MODIFIERS = [
-    "", "game", "games", "app", "free", "offline", "online", "2 player", "multiplayer",
-    "for kids", "for adults", "no wifi", "classic", "new", "best", "hd", "3d", "pro",
-    "master", "challenge", "levels", "adventure", "fun", "casual", "relaxing",
+    "", "game", "games", "app", "free", "offline", "online", "multiplayer",
+    "for kids", "no wifi", "classic", "3d",
 ]
 
 SEARCH_QUERIES = sorted({
@@ -110,65 +134,97 @@ def is_not_found(exc):
 
 
 class RateLimiter:
-    """Thread-safe: spaces requests out globally, adds jitter, and backs off
-    exponentially when Google starts throttling."""
+    """Thread-safe global pacing.
+
+    - Spaces requests out with jitter.
+    - On a throttle (429/503/timeout) everyone pauses for an exponentially
+      growing cooldown, and the pace itself slows down; it speeds back up
+      gradually as requests succeed again.
+    - Requests that were already in flight when the throttle hit ("stragglers")
+      do NOT count as new strikes, so one throttle event = one strike.
+    """
 
     def __init__(self, interval):
+        self.base_interval = interval
         self.interval = interval
         self.lock = threading.Lock()
         self.next_slot = 0.0
         self.cooldown_until = 0.0
+        self.last_strike_at = 0.0
         self.strikes = 0
         self.blocked = False
 
     def wait(self, weight=1.0):
+        """Sleep until it's this request's turn. Returns the release time."""
         with self.lock:
             now = time.monotonic()
             start = max(now, self.next_slot, self.cooldown_until)
             self.next_slot = start + self.interval * weight * random.uniform(0.8, 1.4)
         if start > now:
             time.sleep(start - now)
+        return start
 
     def success(self):
         with self.lock:
-            if self.strikes > 0:
-                self.strikes -= 1
+            self.strikes = max(0, self.strikes - 1)
+            self.interval = max(self.base_interval, self.interval * 0.97)
 
-    def failure(self, exc):
+    def failure(self, exc, started_at):
+        """Record a failed request. Returns True if it was a rate-limit error."""
         rate_limited = looks_rate_limited(exc)
-        cooldown = 2.0
+        message = None
         with self.lock:
-            if rate_limited:
-                self.strikes += 1
-                cooldown = min(MAX_COOLDOWN, BASE_COOLDOWN * 2 ** (self.strikes - 1))
-                if self.strikes >= MAX_STRIKES:
-                    self.blocked = True
-            self.cooldown_until = max(self.cooldown_until, time.monotonic() + cooldown)
-            strikes = self.strikes
-        if rate_limited:
-            tqdm.write(f"  rate limited (strike {strikes}/{MAX_STRIKES}) - cooling down {cooldown:.0f}s")
+            now = time.monotonic()
+            if self.blocked:
+                pass  # already stopping; don't pile on more strikes
+            elif rate_limited:
+                if started_at > self.last_strike_at:  # a new throttle event
+                    self.strikes += 1
+                    self.last_strike_at = now
+                    self.interval = min(MAX_INTERVAL, self.interval * 1.5)
+                    cooldown = min(MAX_COOLDOWN, BASE_COOLDOWN * 2 ** (self.strikes - 1))
+                    self.cooldown_until = max(self.cooldown_until, now + cooldown)
+                    if self.strikes >= MAX_STRIKES:
+                        self.blocked = True
+                    message = (f"  rate limited (strike {self.strikes}/{MAX_STRIKES}) - "
+                               f"pausing {cooldown:.0f}s, pace now 1 request / {self.interval:.1f}s")
+                # else: straggler from the same event; the cooldown already covers it
+            else:
+                self.cooldown_until = max(self.cooldown_until, now + 2.0)
+        if message:
+            tqdm.write(message)
+        return rate_limited
 
 
 LIMITER = RateLimiter(REQUEST_INTERVAL)
 
 
 def with_retry(fn, *args, weight=1.0, **kwargs):
-    last_error = None
-    for _ in range(MAX_RETRIES):
+    """Call fn, waiting out rate limits instead of giving up on the request.
+
+    A rate-limited request is retried after the cooldown and does not use up
+    its retry budget, so no app is dropped just because Google throttled us.
+    Raises BlockedError if throttling keeps repeating, NotFound errors
+    immediately, and other errors after MAX_RETRIES attempts.
+    """
+    errors = 0
+    while True:
         if LIMITER.blocked:
             raise BlockedError("too many rate-limit strikes")
-        LIMITER.wait(weight)
+        started = LIMITER.wait(weight)
         try:
             result = fn(*args, **kwargs)
         except Exception as exc:
             if is_not_found(exc):
                 raise
-            last_error = exc
-            LIMITER.failure(exc)
+            if LIMITER.failure(exc, started):
+                continue  # throttled: wait out the cooldown, retry the same request
+            errors += 1
+            if errors >= MAX_RETRIES:
+                raise
             continue
         LIMITER.success()
         return result
-    raise last_error
 
 
 # --------------------------------------------------------------------------
@@ -341,16 +397,20 @@ def fetch_many(package_names, store, country):
                 # any other error is treated as transient: not saved, retried later
 
 
-def run_discovery(store, target_devs, deadline):
+def run_discovery(store, target_devs, deadline, max_searches):
     jobs = []
     for country in SEARCH_COUNTRIES:
         queries = SEARCH_QUERIES[:]
         random.shuffle(queries)
         jobs.extend((query, country) for query in queries)
 
+    available = len(jobs)
+    jobs = jobs[:max_searches]
+
     print(f"\nCache: {len(store.known)} apps, {len(store.qualified_devs)} qualifying developers.")
     print(f"Target: {target_devs} developers | {len(SEARCH_QUERIES)} queries x "
-          f"{len(SEARCH_COUNTRIES)} countries = {len(jobs)} searches available.")
+          f"{len(SEARCH_COUNTRIES)} countries = {available} possible; "
+          f"running at most {len(jobs)}.")
     print(f"Pace: ~1 request every {REQUEST_INTERVAL}s (searches count x{SEARCH_WEIGHT:g}).\n")
 
     stop_reason = "ran out of queries"
@@ -586,6 +646,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-devs", type=int, default=TARGET_DEVELOPERS,
                         help="Stop discovery once this many qualifying developers are found.")
+    parser.add_argument("--max-searches", type=int, default=MAX_SEARCHES,
+                        help="Maximum number of search queries to run in this pass.")
     parser.add_argument("--max-minutes", type=float, default=MAX_RUNTIME_MINUTES,
                         help="Stop discovery after this many minutes so the Excel still gets exported.")
     parser.add_argument("--export-only", action="store_true",
@@ -597,7 +659,7 @@ def main():
 
     try:
         if not args.export_only:
-            run_discovery(store, args.target_devs, deadline)
+            run_discovery(store, args.target_devs, deadline, args.max_searches)
     finally:
         store.flush()  # make sure buffered writes survive Ctrl+C / errors
 
