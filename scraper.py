@@ -23,6 +23,7 @@ MAX_WORKERS = 6
 MAX_RETRIES = 3
 BASE_BACKOFF = 1.5
 MONGO_BATCH_SIZE = 100       # buffered writes per bulk_write call
+DB_NAME = os.environ.get("MONGODB_DB", "db2")  # MongoDB database to store data in
 
 LANG = "en"
 COUNTRY = "in"
@@ -132,7 +133,7 @@ class Store:
             raise RuntimeError("MONGODB_URI environment variable is not set")
 
         self.client = MongoClient(uri, serverSelectionTimeoutMS=30000)
-        self.db = self.client["puzzledb"]
+        self.db = self.client[DB_NAME]
         self.apps = self.db["apps"]
         self.apps.create_index("package_name", unique=True)
         self.client.admin.command("ping")
@@ -496,7 +497,7 @@ def main():
     print(f"Unique developers    : {df['Developer ID'].nunique()}")
     print(f"Hot leads (score 60+): {len(hot)}")
     print(f"Excel                : {OUTPUT_FILE}")
-    print("MongoDB              : puzzledb.apps")
+    print(f"MongoDB              : {DB_NAME}.apps")
     print("=" * 44)
 
     store.close()
