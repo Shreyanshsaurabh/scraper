@@ -20,14 +20,14 @@ import urllib.error
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 MODEL = os.environ.get("MISTRAL_MODEL", "mistral-large-latest")
 
-SYSTEM_PROMPT = """You generate search-query building blocks for a Google Play \
+SYSTEM_PROMPT_TEMPLATE = """You generate search-query building blocks for a Google Play \
 Store app discovery tool. Given a niche/topic, return STRICT JSON only, no \
 prose, no markdown fences, matching exactly this shape:
 
 {"base_terms": ["...", "..."], "modifiers": ["...", "..."]}
 
 Rules:
-- base_terms: {min}-{max} short phrases (1-4 words) real users would type \
+- base_terms: __MIN__-__MAX__ short phrases (1-4 words) real users would type \
 into the Play Store search box to find apps in this niche. Include close \
 synonyms, sub-categories, and common app-type words, but NOT the word \
 "app" or "game" alone as their own entry.
@@ -42,12 +42,17 @@ instead of "2 player"). Include "" (empty string) as one modifier.
 
 
 def call_mistral(keyword, count, api_key, timeout=60):
+    system_prompt = (
+        SYSTEM_PROMPT_TEMPLATE
+        .replace("__MIN__", str(count // 2))
+        .replace("__MAX__", str(count))
+    )
     payload = {
         "model": MODEL,
         "temperature": 0.4,
         "response_format": {"type": "json_object"},
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT.format(min=count // 2, max=count)},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Niche: {keyword}"},
         ],
     }
