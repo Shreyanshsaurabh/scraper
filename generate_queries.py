@@ -1,8 +1,10 @@
 """
 Turns a plain-language niche ("puzzle game", "finance", "fitness tracking")
 into a list of base search terms + modifiers for the Play Store scraper,
-using the Mistral API. Writes queries.json, which scraper.py reads if
-QUERIES_FILE is set.
+using Groq's free-tier LLM API (OpenAI-compatible). Writes queries.json,
+which scraper.py reads if QUERIES_FILE is set.
+
+Get a free key at https://console.groq.com/keys - no billing info required.
 
 Usage:
     python generate_queries.py "puzzle game"
@@ -19,8 +21,10 @@ import time
 import urllib.request
 import urllib.error
 
-MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
-MODEL = os.environ.get("MISTRAL_MODEL", "mistral-large-latest")
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+# llama-3.3-70b-versatile is a good default: free tier, strong instruction
+# following, supports JSON mode. Override with GROQ_MODEL if needed.
+MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 SYSTEM_PROMPT_TEMPLATE = """You generate search-query building blocks for a Google Play \
 Store app discovery tool. Given a niche/topic, return STRICT JSON only, no \
@@ -43,7 +47,7 @@ instead of "2 player"). Include "" (empty string) as one modifier.
 """
 
 
-def call_mistral(keyword, count, api_key, timeout=60, max_retries=5):
+def call_groq(keyword, count, api_key, timeout=60, max_retries=5):
     system_prompt = (
         SYSTEM_PROMPT_TEMPLATE
         .replace("__MIN__", str(count // 2))
@@ -59,7 +63,7 @@ def call_mistral(keyword, count, api_key, timeout=60, max_retries=5):
         ],
     }
     req = urllib.request.Request(
-        MISTRAL_URL,
+        GROQ_URL,
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
@@ -76,16 +80,16 @@ def call_mistral(keyword, count, api_key, timeout=60, max_retries=5):
             return body["choices"][0]["message"]["content"]
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            last_error = RuntimeError(f"Mistral API error {exc.code}: {detail}")
+            last_error = RuntimeError(f"Groq API error {exc.code}: {detail}")
             if exc.code in (429, 500, 502, 503, 504) and attempt < max_retries:
                 wait = min(60, 2 ** attempt) + random.uniform(0, 1)
-                print(f"  Mistral returned {exc.code} (attempt {attempt}/{max_retries}) "
+                print(f"  Groq returned {exc.code} (attempt {attempt}/{max_retries}) "
                       f"- waiting {wait:.0f}s before retrying...")
                 time.sleep(wait)
                 continue
             raise last_error from exc
         except urllib.error.URLError as exc:
-            last_error = RuntimeError(f"Could not reach Mistral: {exc.reason}")
+            last_error = RuntimeError(f"Could not reach Groq: {exc.reason}")
             if attempt < max_retries:
                 wait = min(60, 2 ** attempt)
                 print(f"  Network error (attempt {attempt}/{max_retries}) - waiting {wait:.0f}s...")
@@ -138,12 +142,12 @@ def main():
     parser.add_argument("--count", type=int, default=30, help="Target number of base terms")
     args = parser.parse_args()
 
-    api_key = os.environ.get("MISTRAL_API_KEY")
+    api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        sys.exit("MISTRAL_API_KEY environment variable is not set")
+        sys.exit("GROQ_API_KEY environment variable is not set")
 
-    print(f"Asking Mistral for search terms covering: {args.keyword!r}")
-    raw = call_mistral(args.keyword, args.count, api_key)
+    print(f"Asking Groq ({MODEL}) for search terms covering: {args.keyword!r}")
+    raw = call_groq(args.keyword, args.count, api_key)
     base_terms, modifiers = parse_and_validate(raw)
 
     queries = sorted({
