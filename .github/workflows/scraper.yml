@@ -41,7 +41,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install pandas openpyxl tqdm google-play-scraper "pymongo[srv]"
+          pip install pandas openpyxl tqdm google-play-scraper "pymongo[srv]" requests
 
       - name: Check MongoDB host (password is never printed)
         env:
