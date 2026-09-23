@@ -27,7 +27,7 @@ except ImportError:
     RAW_AVAILABLE = False
 
 OUTPUT_FILE = "puzzle.xlsx"
-DB_NAME = os.environ.get("MONGODB_DB", "db3")
+DB_NAME = os.environ.get("MONGODB_DB", "fashion")
 
 # ---- goals / filters -------------------------------------------------------
 TARGET_DEVELOPERS = 10_000
@@ -50,7 +50,7 @@ MAX_STRIKES = 6            # this many separate throttle events in a row -> assu
 # ---- discovery -------------------------------------------------------------
 RESULTS_PER_QUERY = 250
 LANG = "en"
-MAX_SEARCHES = 10        # hard cap on total search queries per run (see --max-searches)
+MAX_SEARCHES = 500       # hard cap on total search queries per run (see --max-searches)
 # Countries are searched in this order, and the MAX_SEARCHES cap applies to the
 # whole list. With ~2,600 queries per country, 1000 searches never get past the
 # first country, so extras only matter if you raise the cap.
@@ -59,56 +59,93 @@ SEARCH_COUNTRIES = ["in"]  # e.g. ["in", "us", "gb"] for more variety
 MONGO_BATCH_SIZE = 100
 
 BASE_TERMS = [
-    # core puzzle
-    "puzzle", "puzzle game", "brain teaser", "brain training", "brain game", "brain puzzle",
-    "brain test", "brain out", "tricky puzzle", "logic puzzle", "logic game", "logic riddles",
-    "match 3", "match puzzle", "match 3 adventure", "block puzzle", "block game", "block blast",
-    "woodoku", "wood puzzle", "hexa puzzle", "hexa sort", "tile puzzle", "tile match",
-    "tile connect", "triple tile", "triple match", "merge puzzle", "number merge", "color puzzle",
-    "color match", "color sort", "sorting puzzle", "ball sort", "water sort", "bottle sort",
-    "tube sort", "number sort", "screw puzzle", "nuts and bolts", "jigsaw", "jigsaw puzzle",
-    "jigsaw for kids", "jigsaw for adults", "photo puzzle", "art puzzle", "landscape jigsaw",
-    "tangram", "sliding puzzle", "slide puzzle", "sliding block", "15 puzzle", "sliding tile",
-    "sudoku", "sudoku classic", "sudoku 9x9", "killer sudoku", "kakuro", "nonogram", "minesweeper",
-    "crossword", "crossword puzzle", "codeword", "cryptogram", "acrostic",
-    # words / numbers / math / quiz
-    "word puzzle", "word game", "word search", "word connect", "word cookies", "word crush",
-    "word blocks", "word stack", "word scramble", "word ladder", "wordle", "hangman",
-    "anagram", "guess the word", "guess the picture", "4 pics", "spelling game",
-    "vocabulary game", "alphabet game", "number puzzle", "number game", "number match", "2048",
-    "math puzzle", "math game", "math quiz", "mental math", "multiplication game",
-    "quiz", "quiz game", "trivia", "trivia game", "general knowledge quiz", "IQ test", "riddle",
-    "riddle game", "memory game", "memory match", "matching pairs", "pair game", "memory training",
-    "concentration game", "focus game", "reflex game", "thinking game", "mind game",
-    # objects / mystery / adventure
-    "hidden object", "hidden objects mystery", "find hidden objects", "hidden numbers",
-    "seek and find", "spot the difference", "find the difference", "connect dots", "one line",
-    "draw puzzle", "draw to save", "maze", "labyrinth", "escape room", "escape game",
-    "room escape", "escape puzzle", "escape adventure", "point and click", "adventure puzzle",
-    "story puzzle", "mystery puzzle", "detective puzzle", "detective game", "murder mystery",
-    # physics / shooters / pipes
-    "pipe puzzle", "flow puzzle", "physics puzzle", "physics game", "rope puzzle", "cut the rope",
-    "chain reaction", "bubble shooter", "bubble puzzle", "bubble pop", "marble shooter", "marble",
-    "zuma", "rolling ball", "stack game", "tower building", "unblock puzzle", "unblock car",
-    "parking puzzle", "traffic puzzle", "puzzle platformer",
-    # classic / board / card
-    "mahjong", "mahjong solitaire", "mahjong connect", "onet", "solitaire", "spider solitaire",
-    "freecell", "klondike", "tetris", "brick breaker", "chess", "chess puzzle", "chess offline",
-    "checkers", "reversi", "othello", "connect four", "gomoku", "tic tac toe", "sokoban",
-    "dominoes", "domino puzzle", "ludo", "carrom", "snakes and ladders", "card game", "rummy",
-    "blackjack", "strategy puzzle", "tower defense puzzle",
-    # casual / kids / creative
-    "casual game", "arcade game", "hyper casual", "idle game", "clicker game", "gem match",
-    "jewel match", "fruit match", "fruit crush", "diamond match", "candy match", "pop it",
-    "3d puzzle", "shape puzzle", "pattern puzzle", "kids puzzle", "educational puzzle",
-    "toddler puzzle", "baby puzzle", "animal puzzle", "car puzzle", "preschool game",
-    "kids learning game", "educational game", "coloring book", "color by number",
-    "paint by number", "pixel art", "drawing game", "diamond painting", "puzzle for adults",
+    # Banking & payments
+    "banking",
+    "mobile banking",
+    "digital banking",
+    "bank account",
+    "money transfer",
+    "upi",
+    "payments",
+    "digital wallet",
+
+    # Personal finance
+    "personal finance",
+    "money management",
+    "budget",
+    "budgeting",
+    "expense tracker",
+    "money manager",
+    "bill tracker",
+    "cash flow",
+
+    # Investing & stocks
+    "investment",
+    "investing",
+    "stocks",
+    "stock market",
+    "stock trading",
+    "trading",
+    "portfolio",
+    "wealth management",
+
+    # Mutual funds & savings
+    "mutual funds",
+    "sip",
+    "etf",
+    "bonds",
+    "savings",
+    "financial planning",
+    "retirement planning",
+
+    # Loans & credit
+    "loan",
+    "personal loan",
+    "loan calculator",
+    "emi",
+    "credit score",
+    "credit card",
+    "debt management",
+
+    # Insurance
+    "insurance",
+    "life insurance",
+    "health insurance",
+
+    # Tax & accounting
+    "tax",
+    "tax calculator",
+    "accounting",
+    "bookkeeping",
+    "invoice",
+
+    # Crypto & forex
+    "cryptocurrency",
+    "crypto trading",
+    "forex",
 ]
 
 MODIFIERS = [
-    "", "game", "games", "app", "free", "offline", "online", "multiplayer",
-    "for kids", "no wifi", "classic", "3d",
+    "",
+    "app",
+    "apps",
+    "online",
+    "mobile",
+    "digital",
+    "free",
+    "simple",
+    "smart",
+    "easy",
+    "calculator",
+    "tracker",
+    "manager",
+    "planner",
+    "assistant",
+    "tool",
+    "dashboard",
+    "for beginners",
+    "for business",
+    "for personal use",
 ]
 
 SEARCH_QUERIES = sorted({
