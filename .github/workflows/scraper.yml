@@ -63,6 +63,7 @@ jobs:
         if: ${{ github.event.inputs.keyword != '' }}
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          MISTRAL_MODEL: mistral-small-latest
         run: |
           python generate_queries.py "${{ github.event.inputs.keyword }}" --out queries.json
 
