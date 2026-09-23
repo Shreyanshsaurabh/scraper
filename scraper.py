@@ -27,7 +27,7 @@ except ImportError:
     RAW_AVAILABLE = False
 
 OUTPUT_FILE = "puzzle.xlsx"
-DB_NAME = os.environ.get("MONGODB_DB", "db3")
+DB_NAME = os.environ.get("MONGODB_DB", "db2")
 
 # ---- goals / filters -------------------------------------------------------
 TARGET_DEVELOPERS = 10_000
@@ -50,11 +50,14 @@ MAX_STRIKES = 6            # this many separate throttle events in a row -> assu
 # ---- discovery -------------------------------------------------------------
 RESULTS_PER_QUERY = 250
 LANG = "en"
-MAX_SEARCHES = 10        # hard cap on total search queries per run (see --max-searches)
+MAX_SEARCHES = 1000        # hard cap on total search queries per run (see --max-searches)
 # Countries are searched in this order, and the MAX_SEARCHES cap applies to the
-# whole list. With ~2,600 queries per country, 1000 searches never get past the
-# first country, so extras only matter if you raise the cap.
-SEARCH_COUNTRIES = ["in"]  # e.g. ["in", "us", "gb"] for more variety
+# whole list. Set via REGIONS="in,us,gb" (comma separated) or --regions.
+SEARCH_COUNTRIES = [
+    c.strip().lower() for c in os.environ.get("REGIONS", "in").split(",") if c.strip()
+] or ["in"]
+
+QUERIES_FILE = os.environ.get("QUERIES_FILE", "queries.json")
 
 MONGO_BATCH_SIZE = 100
 
@@ -111,9 +114,32 @@ MODIFIERS = [
     "for kids", "no wifi", "classic", "3d",
 ]
 
+def load_query_terms():
+    """Use BASE_TERMS/MODIFIERS from QUERIES_FILE (written by generate_queries.py)
+    if it exists and looks valid; otherwise fall back to the built-in puzzle list."""
+    if os.path.exists(QUERIES_FILE):
+        try:
+            with open(QUERIES_FILE) as f:
+                data = json.load(f)
+            base = [t for t in data.get("base_terms", []) if isinstance(t, str) and t.strip()]
+            mods = [m for m in data.get("modifiers", []) if isinstance(m, str)]
+            if len(base) >= 3 and len(mods) >= 1:
+                print(f"Loaded {len(base)} base terms / {len(mods)} modifiers from "
+                      f"{QUERIES_FILE} (keyword: {data.get('keyword', '?')!r}).")
+                return base, mods
+            print(f"{QUERIES_FILE} looked too small ({len(base)} terms, {len(mods)} "
+                  f"modifiers) - falling back to the built-in puzzle query list.")
+        except (json.JSONDecodeError, OSError) as exc:
+            print(f"Could not read {QUERIES_FILE} ({exc}) - falling back to the "
+                  f"built-in puzzle query list.")
+    return BASE_TERMS, MODIFIERS
+
+
+ACTIVE_BASE_TERMS, ACTIVE_MODIFIERS = load_query_terms()
+
 SEARCH_QUERIES = sorted({
     f"{term} {modifier}".strip()
-    for term, modifier in itertools.product(BASE_TERMS, MODIFIERS)
+    for term, modifier in itertools.product(ACTIVE_BASE_TERMS, ACTIVE_MODIFIERS)
 })
 
 
@@ -784,6 +810,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-devs", type=int, default=TARGET_DEVELOPERS,
                         help="Stop discovery once this many qualifying developers are found.")
+    parser.add_argument("--regions", default=None,
+                        help='Comma-separated Play Store country codes, e.g. "in,us,gb". '
+                             'Overrides the REGIONS environment variable.')
     parser.add_argument("--max-searches", type=int, default=MAX_SEARCHES,
                         help="Maximum number of search queries to run in this pass.")
     parser.add_argument("--max-minutes", type=float, default=MAX_RUNTIME_MINUTES,
@@ -795,6 +824,10 @@ def main():
     parser.add_argument("--export-only", action="store_true",
                         help="Skip all discovery/fetching, just rebuild the Excel from cache.")
     args = parser.parse_args()
+
+    global SEARCH_COUNTRIES
+    if args.regions:
+        SEARCH_COUNTRIES = [c.strip().lower() for c in args.regions.split(",") if c.strip()] or SEARCH_COUNTRIES
 
     if args.inspect:
         inspect_app(args.inspect, SEARCH_COUNTRIES[0])
