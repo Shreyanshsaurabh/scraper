@@ -50,7 +50,7 @@ MAX_STRIKES = 6            # this many separate throttle events in a row -> assu
 # ---- discovery -------------------------------------------------------------
 RESULTS_PER_QUERY = 250
 LANG = "en"
-MAX_SEARCHES = 1000        # hard cap on total search queries per run (see --max-searches)
+MAX_SEARCHES = 10        # hard cap on total search queries per run (see --max-searches)
 # Countries are searched in this order, and the MAX_SEARCHES cap applies to the
 # whole list. With ~2,600 queries per country, 1000 searches never get past the
 # first country, so extras only matter if you raise the cap.
