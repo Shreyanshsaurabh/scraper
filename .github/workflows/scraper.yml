@@ -1,16 +1,8 @@
-name: Scrape Play Store Developers by Keyword
+name: Scrape Play Store Puzzle Developers
 
 on:
   workflow_dispatch:
     inputs:
-      keyword:
-        description: 'Niche to search, e.g. "puzzle game" or "finance". Leave blank to use the built-in puzzle query list.'
-        required: false
-        default: ""
-      regions:
-        description: "Comma-separated Play Store country codes, e.g. in,us,gb"
-        required: false
-        default: "in"
       target_devs:
         description: "Number of qualifying developers to collect"
         required: false
@@ -41,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install pandas openpyxl tqdm google-play-scraper "pymongo[srv]" requests
+          pip install pandas openpyxl tqdm google-play-scraper "pymongo[srv]"
 
       - name: Check MongoDB host (password is never printed)
         env:
@@ -59,19 +51,10 @@ jobs:
               sys.exit(f"Host '{host}' is incomplete - copy the full string from Atlas > Connect > Drivers")
           EOF
 
-      - name: Generate search terms from keyword
-        if: ${{ github.event.inputs.keyword != '' }}
-        env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-        run: |
-          python generate_queries.py "${{ github.event.inputs.keyword }}" --out queries.json
-
       - name: Run scraper
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           MONGODB_DB: db3
-          REGIONS: ${{ github.event.inputs.regions || 'in' }}
-          QUERIES_FILE: queries.json
           TARGET_DEVS: ${{ github.event.inputs.target_devs || '10000' }}
           EXTRA_ARGS: ${{ github.event.inputs.extra_args }}
         run: |
@@ -83,12 +66,4 @@ jobs:
         with:
           name: puzzle-developers
           path: puzzle.xlsx
-          if-no-files-found: ignore
-
-      - name: Upload generated queries (for inspection)
-        if: ${{ github.event.inputs.keyword != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: generated-queries
-          path: queries.json
           if-no-files-found: ignore
