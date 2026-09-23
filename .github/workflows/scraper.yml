@@ -47,11 +47,14 @@ jobs:
               sys.exit(f"Host '{host}' is incomplete - copy the full string from Atlas > Connect > Drivers")
           EOF
 
-      - name: Run scraper
+            - name: Run scraper
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          MONGODB_DB: db3
+          TARGET_DEVS: ${{ github.event.inputs.target_devs || '10000' }}
+          EXTRA_ARGS: ${{ github.event.inputs.extra_args }}
         run: |
-          python scraper.py --target-devs "${{ github.event.inputs.target_devs || '10000' }}"
+          python scraper.py --target-devs "$TARGET_DEVS" $EXTRA_ARGS
 
       - name: Upload Excel
         if: always()
