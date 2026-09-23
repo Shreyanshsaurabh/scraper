@@ -1,8 +1,16 @@
-name: Scrape Play Store Puzzle Developers
+name: Scrape Play Store Developers by Keyword
 
 on:
   workflow_dispatch:
     inputs:
+      keyword:
+        description: 'Niche to search, e.g. "puzzle game" or "finance". Leave blank to use the built-in puzzle query list.'
+        required: false
+        default: ""
+      regions:
+        description: "Comma-separated Play Store country codes, e.g. in,us,gb"
+        required: false
+        default: "in"
       target_devs:
         description: "Number of qualifying developers to collect"
         required: false
@@ -39,20 +47,31 @@ jobs:
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
         run: |
-          python - <<'PY'
+          python - <<'EOF'
           import os, sys
           uri = os.environ.get("MONGODB_URI", "")
           if not uri:
               sys.exit("MONGODB_URI secret is empty or not set")
           host = uri.split("@")[-1].split("/")[0].split("?")[0]
           print("Mongo host:", host)
+          # Atlas hosts look like cluster0.ab1cd.mongodb.net (3+ parts before .net)
           if host.count(".") < 3:
               sys.exit(f"Host '{host}' is incomplete - copy the full string from Atlas > Connect > Drivers")
-          PY
+          EOF
+
+      - name: Generate search terms from keyword
+        if: ${{ github.event.inputs.keyword != '' }}
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: |
+          python generate_queries.py "${{ github.event.inputs.keyword }}" --out queries.json
 
       - name: Run scraper
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          MONGODB_DB: db3
+          REGIONS: ${{ github.event.inputs.regions || 'in' }}
+          QUERIES_FILE: queries.json
           TARGET_DEVS: ${{ github.event.inputs.target_devs || '10000' }}
           EXTRA_ARGS: ${{ github.event.inputs.extra_args }}
         run: |
@@ -64,4 +83,12 @@ jobs:
         with:
           name: puzzle-developers
           path: puzzle.xlsx
+          if-no-files-found: ignore
+
+      - name: Upload generated queries (for inspection)
+        if: ${{ github.event.inputs.keyword != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-queries
+          path: queries.json
           if-no-files-found: ignore
