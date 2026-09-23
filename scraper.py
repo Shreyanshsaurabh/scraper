@@ -27,7 +27,7 @@ except ImportError:
     RAW_AVAILABLE = False
 
 OUTPUT_FILE = "puzzle.xlsx"
-DB_NAME = os.environ.get("MONGODB_DB", "db3")
+DB_NAME = os.environ.get("MONGODB_DB", "db2")
 
 # ---- goals / filters -------------------------------------------------------
 TARGET_DEVELOPERS = 10_000
