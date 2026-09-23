@@ -7,6 +7,10 @@ on:
         description: "Number of qualifying developers to collect"
         required: false
         default: "10000"
+      extra_args:
+        description: "Optional extra flags, e.g. --backfill-phones  or  --inspect com.some.app  or  --max-searches 500"
+        required: false
+        default: ""
   # Uncomment to run automatically every day at 02:00 UTC
   # schedule:
   #   - cron: "0 2 * * *"
@@ -35,22 +39,20 @@ jobs:
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
         run: |
-          python - <<'EOF'
+          python - <<'PY'
           import os, sys
           uri = os.environ.get("MONGODB_URI", "")
           if not uri:
               sys.exit("MONGODB_URI secret is empty or not set")
           host = uri.split("@")[-1].split("/")[0].split("?")[0]
           print("Mongo host:", host)
-          # Atlas hosts look like cluster0.ab1cd.mongodb.net (3+ parts before .net)
           if host.count(".") < 3:
               sys.exit(f"Host '{host}' is incomplete - copy the full string from Atlas > Connect > Drivers")
-          EOF
+          PY
 
-            - name: Run scraper
+      - name: Run scraper
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          MONGODB_DB: db3
           TARGET_DEVS: ${{ github.event.inputs.target_devs || '10000' }}
           EXTRA_ARGS: ${{ github.event.inputs.extra_args }}
         run: |
