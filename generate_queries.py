@@ -12,8 +12,10 @@ Usage:
 import argparse
 import json
 import os
+import random
 import re
 import sys
+import time
 import urllib.request
 import urllib.error
 
@@ -41,7 +43,7 @@ instead of "2 player"). Include "" (empty string) as one modifier.
 """
 
 
-def call_mistral(keyword, count, api_key, timeout=60):
+def call_mistral(keyword, count, api_key, timeout=60, max_retries=5):
     system_prompt = (
         SYSTEM_PROMPT_TEMPLATE
         .replace("__MIN__", str(count // 2))
@@ -65,13 +67,33 @@ def call_mistral(keyword, count, api_key, timeout=60):
         },
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Mistral API error {exc.code}: {detail}") from exc
-    return body["choices"][0]["message"]["content"]
+
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+            return body["choices"][0]["message"]["content"]
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            last_error = RuntimeError(f"Mistral API error {exc.code}: {detail}")
+            if exc.code in (429, 500, 502, 503, 504) and attempt < max_retries:
+                wait = min(60, 2 ** attempt) + random.uniform(0, 1)
+                print(f"  Mistral returned {exc.code} (attempt {attempt}/{max_retries}) "
+                      f"- waiting {wait:.0f}s before retrying...")
+                time.sleep(wait)
+                continue
+            raise last_error from exc
+        except urllib.error.URLError as exc:
+            last_error = RuntimeError(f"Could not reach Mistral: {exc.reason}")
+            if attempt < max_retries:
+                wait = min(60, 2 ** attempt)
+                print(f"  Network error (attempt {attempt}/{max_retries}) - waiting {wait:.0f}s...")
+                time.sleep(wait)
+                continue
+            raise last_error from exc
+
+    raise last_error
 
 
 _WORD_RE = re.compile(r"^[a-z0-9][a-z0-9 ]{0,40}$")
