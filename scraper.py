@@ -1,5 +1,6 @@
 import argparse
 import itertools
+import json
 import math
 import os
 import random
@@ -16,8 +17,17 @@ from google_play_scraper.exceptions import NotFoundError
 from pymongo import MongoClient, UpdateOne
 from tqdm import tqdm
 
+try:  # lets us read the developer contact block (phone) from the SAME page request
+    from google_play_scraper.constants.regex import Regex
+    from google_play_scraper.constants.request import Formats
+    from google_play_scraper.features.app import parse_dom
+    from google_play_scraper.utils.request import get as _http_get
+    RAW_AVAILABLE = True
+except ImportError:
+    RAW_AVAILABLE = False
+
 OUTPUT_FILE = "puzzle.xlsx"
-DB_NAME = os.environ.get("MONGODB_DB", "db2")
+DB_NAME = os.environ.get("MONGODB_DB", "db3")
 
 # ---- goals / filters -------------------------------------------------------
 TARGET_DEVELOPERS = 10_000
@@ -117,7 +127,7 @@ class BlockedError(Exception):
 
 _RATE_LIMIT_RE = re.compile(
     r"\b(429|503|403)\b|too many|rate.?limit|quota|captcha|unusual traffic|"
-    r"timed out|timeout|connection (reset|aborted|refused)|remote end closed|temporar",
+    r"timed out|timeout|connection (reset|aborted|refused)|remote end closed|temporar|gateway",
     re.I,
 )
 
@@ -127,10 +137,9 @@ def looks_rate_limited(exc):
 
 
 def is_not_found(exc):
-    if isinstance(exc, NotFoundError):
-        return True
-    message = str(exc).lower()
-    return "not found" in message or "404" in message
+    # Only a real HTTP 404. Don't match on the message text: the library words
+    # EVERY non-404 HTTP error (429, 503...) as "App not found. Status code N".
+    return isinstance(exc, NotFoundError)
 
 
 class RateLimiter:
@@ -346,6 +355,25 @@ class Store:
             self.apps.bulk_write(self._buffer, ordered=False)
             self._buffer = []
 
+    def phone_backfill_candidates(self):
+        """One app per qualifying developer whose stored data pre-dates phone
+        support (no `developerPhone` key on any of their apps)."""
+        done = {str(d) for d in self.apps.distinct(
+            "payload.developerId", {"payload.developerPhone": {"$exists": True}})}
+        seen, packages = set(done), []
+        cursor = self.apps.find(
+            {"ok": True, "payload": {"$ne": None},
+             "payload.developerPhone": {"$exists": False}},
+            {"package_name": 1, "payload": 1, "_id": 0},
+        )
+        for r in cursor:
+            payload = r["payload"]
+            dev_id = str(payload.get("developerId") or "")
+            if dev_id and dev_id not in seen and qualifies(payload):
+                seen.add(dev_id)
+                packages.append(r["package_name"])
+        return packages
+
     def all_records(self):
         return [
             r["payload"]
@@ -369,13 +397,88 @@ KEEP_FIELDS = (
     "title", "url", "appId", "realInstalls", "installs", "containsAds",
     "offersIAP", "genre", "genreId", "score", "ratings", "reviews",
     "developer", "developerId", "developerEmail", "developerWebsite",
-    "developerAddress", "updated", "released", "free", "adSupported",
+    "developerAddress", "developerPhone", "updated", "released", "free", "adSupported",
     "contentRating", "privacyPolicy",
 )
 
 
+# The "About the developer / App support" data lives in dataset ds:5. The
+# library already reads website [1,2,69,0], email [1,2,69,1] and address
+# [1,2,69,2] from it but doesn't expose a phone number, so we scan the developer
+# blocks for a phone-looking string. Run `--inspect <package>` to see the raw
+# block if a phone that shows on the Play page isn't being picked up.
+DEV_DATASET = "ds:5"
+DEV_BLOCK_PATHS = ([1, 2, 69], [1, 2, 68])
+_PHONE_RE = re.compile(r"^\+?\(?\d[\d\s().\-]{5,18}\d$")
+
+
+def build_dataset(dom):
+    dataset = {}
+    for match in Regex.SCRIPT.findall(dom):
+        key_match = Regex.KEY.findall(match)
+        value_match = Regex.VALUE.findall(match)
+        if key_match and value_match:
+            try:
+                dataset[key_match[0]] = json.loads(value_match[0])
+            except ValueError:
+                continue
+    return dataset
+
+
+def _dig(node, path):
+    for index in path:
+        try:
+            node = node[index]
+        except (IndexError, KeyError, TypeError):
+            return None
+    return node
+
+
+def find_phone(node):
+    if isinstance(node, str):
+        text = node.strip()
+        digits = re.sub(r"\D", "", text)
+        if _PHONE_RE.match(text) and 7 <= len(digits) <= 15:
+            return text
+        return ""
+    if isinstance(node, (list, tuple)):
+        for item in node:
+            found = find_phone(item)
+            if found:
+                return found
+    return ""
+
+
+def extract_developer_phone(dom):
+    try:
+        root = build_dataset(dom).get(DEV_DATASET)
+        for path in DEV_BLOCK_PATHS:
+            phone = find_phone(_dig(root, path))
+            if phone:
+                return phone
+    except Exception:
+        pass
+    return ""
+
+
+def fetch_details(package_name, country):
+    if not RAW_AVAILABLE:
+        return fetch_app(package_name, lang=LANG, country=country)
+
+    url = Formats.Detail.build(app_id=package_name, lang=LANG, country=country)
+    try:
+        dom = _http_get(url)
+    except NotFoundError:
+        url = Formats.Detail.fallback_build(app_id=package_name, lang=LANG)
+        dom = _http_get(url)
+
+    details = parse_dom(dom=dom, app_id=package_name, url=url)
+    details["developerPhone"] = extract_developer_phone(dom)
+    return details
+
+
 def fetch_one(package_name, country):
-    details = with_retry(fetch_app, package_name, lang=LANG, country=country)
+    details = with_retry(fetch_details, package_name, country)
     return {k: details.get(k) for k in KEEP_FIELDS}
 
 
@@ -463,6 +566,35 @@ def run_discovery(store, target_devs, deadline, max_searches):
         print("Progress is saved in MongoDB - run again to continue where this left off.")
 
 
+def backfill_phones(store, deadline, country):
+    """Re-fetch one app per developer that was saved before phone support."""
+    todo = store.phone_backfill_candidates()
+    print(f"\n{len(todo)} developers need a phone lookup (1 request each).")
+    chunk = 200
+    for start in tqdm(range(0, len(todo), chunk), desc="Backfilling phones"):
+        if LIMITER.blocked:
+            print("Google Play is rate-limiting this IP - stopping; run again later.")
+            break
+        if time.monotonic() >= deadline:
+            print("Time limit reached - run again to continue.")
+            break
+        fetch_many(todo[start:start + chunk], store, country)
+        store.flush()
+
+
+def inspect_app(package_name, country):
+    """Print the raw developer block for one app so phone extraction can be checked."""
+    if not RAW_AVAILABLE:
+        raise SystemExit("This google_play_scraper version doesn't expose the raw page helpers.")
+    url = Formats.Detail.build(app_id=package_name, lang=LANG, country=country)
+    dom = _http_get(url)
+    root = build_dataset(dom).get(DEV_DATASET)
+    for path in DEV_BLOCK_PATHS:
+        print(f"--- {DEV_DATASET}{path} ---")
+        print(json.dumps(_dig(root, path), indent=2, ensure_ascii=False))
+    print("\nDetected phone:", extract_developer_phone(dom) or "(none)")
+
+
 # --------------------------------------------------------------------------
 # scoring / export
 # --------------------------------------------------------------------------
@@ -514,6 +646,7 @@ def build_dataframe(store):
         rows.append({
             "Developer Name": record.get("developer") or "",
             "Developer Email": record.get("developerEmail") or "",
+            "Developer Phone": record.get("developerPhone") or "",
             "Developer Website": record.get("developerWebsite") or "",
             "Developer Address": record.get("developerAddress") or "",
             "Developer ID": str(record.get("developerId") or ""),
@@ -557,13 +690,18 @@ def build_dataframe(store):
     return df
 
 
+def first_non_empty(series):
+    return next((v for v in series if v), "")
+
+
 def build_developer_sheet(df):
     grouped = df.groupby("Developer ID", dropna=False).agg(
         **{
             "Developer Name": ("Developer Name", "first"),
-            "Developer Email": ("Developer Email", "first"),
-            "Developer Website": ("Developer Website", "first"),
-            "Developer Address": ("Developer Address", "first"),
+            "Developer Email": ("Developer Email", first_non_empty),
+            "Developer Phone": ("Developer Phone", first_non_empty),
+            "Developer Website": ("Developer Website", first_non_empty),
+            "Developer Address": ("Developer Address", first_non_empty),
             "App Count": ("Package Name", "count"),
             "Total Installs": ("Downloads", "sum"),
             "Best App Installs": ("Downloads", "max"),
@@ -582,7 +720,7 @@ def build_developer_sheet(df):
     )
 
     columns = [
-        "Developer Name", "Developer Email", "Developer Website",
+        "Developer Name", "Developer Email", "Developer Phone", "Developer Website",
         "Developer Address", "Developer ID", "Top App", "App Count",
         "Total Installs", "Best App Installs", "Apps With Ads", "Avg Rating",
         "Freshest Update (days)", "Best Lead Score",
@@ -650,15 +788,25 @@ def main():
                         help="Maximum number of search queries to run in this pass.")
     parser.add_argument("--max-minutes", type=float, default=MAX_RUNTIME_MINUTES,
                         help="Stop discovery after this many minutes so the Excel still gets exported.")
+    parser.add_argument("--backfill-phones", action="store_true",
+                        help="Re-fetch one app per saved developer to add phone numbers, then export.")
+    parser.add_argument("--inspect", metavar="PACKAGE",
+                        help="Print the raw developer block for one app (e.g. com.example.game) and exit.")
     parser.add_argument("--export-only", action="store_true",
                         help="Skip all discovery/fetching, just rebuild the Excel from cache.")
     args = parser.parse_args()
+
+    if args.inspect:
+        inspect_app(args.inspect, SEARCH_COUNTRIES[0])
+        return
 
     store = Store()
     deadline = time.monotonic() + args.max_minutes * 60
 
     try:
-        if not args.export_only:
+        if args.backfill_phones:
+            backfill_phones(store, deadline, SEARCH_COUNTRIES[0])
+        elif not args.export_only:
             run_discovery(store, args.target_devs, deadline, args.max_searches)
     finally:
         store.flush()  # make sure buffered writes survive Ctrl+C / errors
