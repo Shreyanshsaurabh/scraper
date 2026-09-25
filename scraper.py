@@ -45,7 +45,7 @@ MAX_STRIKES = 6
 
 RESULTS_PER_QUERY = 1000
 LANG = "en"
-MAX_SEARCHES = 10
+MAX_SEARCHES = 10000
 # Added 'in' to country lists
 SEARCH_COUNTRIES = ["ma", "eg"]
 MONGO_BATCH_SIZE = 100
