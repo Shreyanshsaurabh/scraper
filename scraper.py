@@ -46,55 +46,95 @@ MAX_STRIKES = 6
 RESULTS_PER_QUERY = 250
 LANG = "en"
 MAX_SEARCHES = 10
-SEARCH_COUNTRIES = ["in"]
+SEARCH_COUNTRIES = ["tr", "ma", "eg"]
 
 MONGO_BATCH_SIZE = 100
 
 BASE_TERMS = [
-    "puzzle", "puzzle game", "brain teaser", "brain training", "brain game", "brain puzzle",
-    "brain test", "brain out", "tricky puzzle", "logic puzzle", "logic game", "logic riddles",
-    "match 3", "match puzzle", "match 3 adventure", "block puzzle", "block game", "block blast",
-    "woodoku", "wood puzzle", "hexa puzzle", "hexa sort", "tile puzzle", "tile match",
-    "tile connect", "triple tile", "triple match", "merge puzzle", "number merge", "color puzzle",
-    "color match", "color sort", "sorting puzzle", "ball sort", "water sort", "bottle sort",
-    "tube sort", "number sort", "screw puzzle", "nuts and bolts", "jigsaw", "jigsaw puzzle",
-    "jigsaw for kids", "jigsaw for adults", "photo puzzle", "art puzzle", "landscape jigsaw",
-    "tangram", "sliding puzzle", "slide puzzle", "sliding block", "15 puzzle", "sliding tile",
-    "sudoku", "sudoku classic", "sudoku 9x9", "killer sudoku", "kakuro", "nonogram", "minesweeper",
-    "crossword", "crossword puzzle", "codeword", "cryptogram", "acrostic",
-    "word puzzle", "word game", "word search", "word connect", "word cookies", "word crush",
-    "word blocks", "word stack", "word scramble", "word ladder", "wordle", "hangman",
-    "anagram", "guess the word", "guess the picture", "4 pics", "spelling game",
-    "vocabulary game", "alphabet game", "number puzzle", "number game", "number match", "2048",
-    "math puzzle", "math game", "math quiz", "mental math", "multiplication game",
-    "quiz", "quiz game", "trivia", "trivia game", "general knowledge quiz", "IQ test", "riddle",
-    "riddle game", "memory game", "memory match", "matching pairs", "pair game", "memory training",
-    "concentration game", "focus game", "reflex game", "thinking game", "mind game",
-    "hidden object", "hidden objects mystery", "find hidden objects", "hidden numbers",
-    "seek and find", "spot the difference", "find the difference", "connect dots", "one line",
-    "draw puzzle", "draw to save", "maze", "labyrinth", "escape room", "escape game",
-    "room escape", "escape puzzle", "escape adventure", "point and click", "adventure puzzle",
-    "story puzzle", "mystery puzzle", "detective puzzle", "detective game", "murder mystery",
-    "pipe puzzle", "flow puzzle", "physics puzzle", "physics game", "rope puzzle", "cut the rope",
-    "chain reaction", "bubble shooter", "bubble puzzle", "bubble pop", "marble shooter", "marble",
-    "zuma", "rolling ball", "stack game", "tower building", "unblock puzzle", "unblock car",
-    "parking puzzle", "traffic puzzle", "puzzle platformer",
-    "mahjong", "mahjong solitaire", "mahjong connect", "onet", "solitaire", "spider solitaire",
-    "freecell", "klondike", "tetris", "brick breaker", "chess", "chess puzzle", "chess offline",
-    "checkers", "reversi", "othello", "connect four", "gomoku", "tic tac toe", "sokoban",
-    "dominoes", "domino puzzle", "ludo", "carrom", "snakes and ladders", "card game", "rummy",
-    "blackjack", "strategy puzzle", "tower defense puzzle",
-    "casual game", "arcade game", "hyper casual", "idle game", "clicker game", "gem match",
-    "jewel match", "fruit match", "fruit crush", "diamond match", "candy match", "pop it",
-    "3d puzzle", "shape puzzle", "pattern puzzle", "kids puzzle", "educational puzzle",
-    "toddler puzzle", "baby puzzle", "animal puzzle", "car puzzle", "preschool game",
-    "kids learning game", "educational game", "coloring book", "color by number",
-    "paint by number", "pixel art", "drawing game", "diamond painting", "puzzle for adults",
+    # Business
+    "business app", "business tools", "small business app", "invoice app",
+    "invoice maker", "crm app", "accounting app", "bookkeeping app",
+    "business card scanner", "office app", "office suite", "expense tracker",
+    "employee management app", "payroll app", "b2b app",
+
+    # Games
+    "games", "mobile games", "casual games", "action games", "racing games",
+    "arcade games", "rpg games", "strategy games", "simulation games",
+    "adventure games", "shooting games", "card games", "board games",
+    "multiplayer games", "offline games", "kids games",
+
+    # Entertainment
+    "entertainment app", "streaming app", "movie app", "tv app",
+    "comics app", "anime app", "webtoon app", "live tv app",
+    "short video app", "meme app", "fan app",
+
+    # Utility & Tools
+    "utility app", "tools app", "file manager", "cleaner app",
+    "battery saver", "flashlight app", "calculator app", "vpn app",
+    "app locker", "screen recorder", "qr code scanner", "compass app",
+    "launcher app", "keyboard app", "backup app",
+
+    # Social
+    "social app", "social network app", "chat app", "social media app",
+    "community app", "forum app", "social discovery app",
+
+    # Dating
+    "dating app", "chat and date app", "meet people app",
+    "matchmaking app", "online dating app", "video chat dating app",
+
+    # Sports
+    "sports app", "football app", "live score app", "fitness tracker app",
+    "cricket app", "sports news app", "workout app", "running app",
+    "gym app", "football live scores",
+
+    # Travel
+    "travel app", "flight booking app", "hotel booking app",
+    "maps and navigation app", "travel guide app", "travel planner",
+    "taxi booking app", "car rental app",
+
+    # Lifestyle
+    "lifestyle app", "fashion app", "beauty app", "recipe app",
+    "home design app", "wedding planner app", "horoscope app",
+    "astrology app", "pregnancy tracker app",
+
+    # Productivity
+    "productivity app", "to do list app", "note taking app",
+    "calendar app", "task manager app", "planner app", "pdf reader app",
+    "resume builder app", "scanner app document",
+
+    # Video Players & Downloader
+    "video player app", "video downloader app", "mp4 player app",
+    "media player app", "video status downloader", "video converter app",
+
+    # Communication
+    "communication app", "messenger app", "video call app", "sms app",
+    "email app", "voice call app", "group chat app", "translator app",
+
+    # Finance
+    "finance app", "banking app", "budget app", "loan app",
+    "investment app", "wallet app", "money transfer app",
+    "trading app", "crypto app", "personal finance app",
+
+    # Reward
+    "reward app", "cashback app", "earn money app", "rewards points app",
+    "gift card app", "survey app earn money", "spin and win app",
+
+    # Photography
+    "photography app", "photo editor app", "camera app", "collage maker app",
+    "photo filter app", "selfie camera app", "photo enhancer app",
+
+    # News
+    "news app", "breaking news app", "local news app", "newspaper app",
+    "news aggregator app",
+
+    # Music
+    "music app", "music player app", "music streaming app",
+    "song downloader app", "karaoke app", "lyrics app", "radio app",
 ]
 
 MODIFIERS = [
-    "", "game", "games", "app", "free", "offline", "online", "multiplayer",
-    "for kids", "no wifi", "classic", "3d",
+    "", "app", "free", "offline", "online", "for android",
+    "download", "best",
 ]
 
 SEARCH_QUERIES = sorted({
