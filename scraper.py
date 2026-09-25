@@ -45,10 +45,9 @@ MAX_STRIKES = 6
 
 RESULTS_PER_QUERY = 1000
 LANG = "en"
-MAX_SEARCHES = 10000
-
+MAX_SEARCHES = 10
 # Added 'in' to country lists
-SEARCH_COUNTRIES = ["tr", "ma", "eg"]
+SEARCH_COUNTRIES = ["ma", "eg"]
 MONGO_BATCH_SIZE = 100
 
 # Highly expanded base terms across various niches to farm more developers
