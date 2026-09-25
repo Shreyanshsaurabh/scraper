@@ -17,7 +17,7 @@ from google_play_scraper.exceptions import NotFoundError
 from pymongo import MongoClient, UpdateOne
 from tqdm import tqdm
 
-try:  # lets us read the developer contact block (phone) from the SAME page request
+try:
     from google_play_scraper.constants.regex import Regex
     from google_play_scraper.constants.request import Formats
     from google_play_scraper.features.app import parse_dom
@@ -29,37 +29,28 @@ except ImportError:
 OUTPUT_FILE = "puzzle.xlsx"
 DB_NAME = os.environ.get("MONGODB_DB", "db3")
 
-# ---- goals / filters -------------------------------------------------------
 TARGET_DEVELOPERS = 10_000
 STALE_AFTER_DAYS = 1460
 MIN_INSTALLS = 10_000
-MAX_RUNTIME_MINUTES = 330          # stop cleanly before GitHub's 6h cut-off
+MAX_RUNTIME_MINUTES = 330
 
-# ---- rate limiting ---------------------------------------------------------
-# One global limiter is shared by ALL threads, so speed is controlled by
-# REQUEST_INTERVAL, not by MAX_WORKERS. Raise it if you still get throttled.
-REQUEST_INTERVAL = float(os.environ.get("REQUEST_INTERVAL", "0.6"))  # seconds per detail fetch
-SEARCH_WEIGHT = 4.0        # a search (n_hits=250) makes several HTTP calls internally
+REQUEST_INTERVAL = float(os.environ.get("REQUEST_INTERVAL", "0.6"))
+SEARCH_WEIGHT = 4.0
 MAX_WORKERS = 4
-MAX_RETRIES = 4            # retries for NON rate-limit errors (rate limits are waited out, not counted)
-BASE_COOLDOWN = 20         # seconds; doubles on each new rate-limit strike
+MAX_RETRIES = 4
+BASE_COOLDOWN = 20
 MAX_COOLDOWN = 240
-MAX_INTERVAL = 4.0         # the pace never slows past 1 request / 4s
-MAX_STRIKES = 6            # this many separate throttle events in a row -> assume blocked, stop cleanly
+MAX_INTERVAL = 4.0
+MAX_STRIKES = 6
 
-# ---- discovery -------------------------------------------------------------
 RESULTS_PER_QUERY = 250
 LANG = "en"
-MAX_SEARCHES = 10        # hard cap on total search queries per run (see --max-searches)
-# Countries are searched in this order, and the MAX_SEARCHES cap applies to the
-# whole list. With ~2,600 queries per country, 1000 searches never get past the
-# first country, so extras only matter if you raise the cap.
-SEARCH_COUNTRIES = ["in"]  # e.g. ["in", "us", "gb"] for more variety
+MAX_SEARCHES = 10
+SEARCH_COUNTRIES = ["in"]
 
 MONGO_BATCH_SIZE = 100
 
 BASE_TERMS = [
-    # core puzzle
     "puzzle", "puzzle game", "brain teaser", "brain training", "brain game", "brain puzzle",
     "brain test", "brain out", "tricky puzzle", "logic puzzle", "logic game", "logic riddles",
     "match 3", "match puzzle", "match 3 adventure", "block puzzle", "block game", "block blast",
@@ -71,7 +62,6 @@ BASE_TERMS = [
     "tangram", "sliding puzzle", "slide puzzle", "sliding block", "15 puzzle", "sliding tile",
     "sudoku", "sudoku classic", "sudoku 9x9", "killer sudoku", "kakuro", "nonogram", "minesweeper",
     "crossword", "crossword puzzle", "codeword", "cryptogram", "acrostic",
-    # words / numbers / math / quiz
     "word puzzle", "word game", "word search", "word connect", "word cookies", "word crush",
     "word blocks", "word stack", "word scramble", "word ladder", "wordle", "hangman",
     "anagram", "guess the word", "guess the picture", "4 pics", "spelling game",
@@ -80,24 +70,20 @@ BASE_TERMS = [
     "quiz", "quiz game", "trivia", "trivia game", "general knowledge quiz", "IQ test", "riddle",
     "riddle game", "memory game", "memory match", "matching pairs", "pair game", "memory training",
     "concentration game", "focus game", "reflex game", "thinking game", "mind game",
-    # objects / mystery / adventure
     "hidden object", "hidden objects mystery", "find hidden objects", "hidden numbers",
     "seek and find", "spot the difference", "find the difference", "connect dots", "one line",
     "draw puzzle", "draw to save", "maze", "labyrinth", "escape room", "escape game",
     "room escape", "escape puzzle", "escape adventure", "point and click", "adventure puzzle",
     "story puzzle", "mystery puzzle", "detective puzzle", "detective game", "murder mystery",
-    # physics / shooters / pipes
     "pipe puzzle", "flow puzzle", "physics puzzle", "physics game", "rope puzzle", "cut the rope",
     "chain reaction", "bubble shooter", "bubble puzzle", "bubble pop", "marble shooter", "marble",
     "zuma", "rolling ball", "stack game", "tower building", "unblock puzzle", "unblock car",
     "parking puzzle", "traffic puzzle", "puzzle platformer",
-    # classic / board / card
     "mahjong", "mahjong solitaire", "mahjong connect", "onet", "solitaire", "spider solitaire",
     "freecell", "klondike", "tetris", "brick breaker", "chess", "chess puzzle", "chess offline",
     "checkers", "reversi", "othello", "connect four", "gomoku", "tic tac toe", "sokoban",
     "dominoes", "domino puzzle", "ludo", "carrom", "snakes and ladders", "card game", "rummy",
     "blackjack", "strategy puzzle", "tower defense puzzle",
-    # casual / kids / creative
     "casual game", "arcade game", "hyper casual", "idle game", "clicker game", "gem match",
     "jewel match", "fruit match", "fruit crush", "diamond match", "candy match", "pop it",
     "3d puzzle", "shape puzzle", "pattern puzzle", "kids puzzle", "educational puzzle",
@@ -117,12 +103,8 @@ SEARCH_QUERIES = sorted({
 })
 
 
-# --------------------------------------------------------------------------
-# rate limiting
-# --------------------------------------------------------------------------
-
 class BlockedError(Exception):
-    """Raised when Play keeps throttling us and we should stop for now."""
+    pass
 
 
 _RATE_LIMIT_RE = re.compile(
@@ -137,22 +119,10 @@ def looks_rate_limited(exc):
 
 
 def is_not_found(exc):
-    # Only a real HTTP 404. Don't match on the message text: the library words
-    # EVERY non-404 HTTP error (429, 503...) as "App not found. Status code N".
     return isinstance(exc, NotFoundError)
 
 
 class RateLimiter:
-    """Thread-safe global pacing.
-
-    - Spaces requests out with jitter.
-    - On a throttle (429/503/timeout) everyone pauses for an exponentially
-      growing cooldown, and the pace itself slows down; it speeds back up
-      gradually as requests succeed again.
-    - Requests that were already in flight when the throttle hit ("stragglers")
-      do NOT count as new strikes, so one throttle event = one strike.
-    """
-
     def __init__(self, interval):
         self.base_interval = interval
         self.interval = interval
@@ -164,7 +134,6 @@ class RateLimiter:
         self.blocked = False
 
     def wait(self, weight=1.0):
-        """Sleep until it's this request's turn. Returns the release time."""
         with self.lock:
             now = time.monotonic()
             start = max(now, self.next_slot, self.cooldown_until)
@@ -179,15 +148,14 @@ class RateLimiter:
             self.interval = max(self.base_interval, self.interval * 0.97)
 
     def failure(self, exc, started_at):
-        """Record a failed request. Returns True if it was a rate-limit error."""
         rate_limited = looks_rate_limited(exc)
         message = None
         with self.lock:
             now = time.monotonic()
             if self.blocked:
-                pass  # already stopping; don't pile on more strikes
+                pass
             elif rate_limited:
-                if started_at > self.last_strike_at:  # a new throttle event
+                if started_at > self.last_strike_at:
                     self.strikes += 1
                     self.last_strike_at = now
                     self.interval = min(MAX_INTERVAL, self.interval * 1.5)
@@ -197,7 +165,6 @@ class RateLimiter:
                         self.blocked = True
                     message = (f"  rate limited (strike {self.strikes}/{MAX_STRIKES}) - "
                                f"pausing {cooldown:.0f}s, pace now 1 request / {self.interval:.1f}s")
-                # else: straggler from the same event; the cooldown already covers it
             else:
                 self.cooldown_until = max(self.cooldown_until, now + 2.0)
         if message:
@@ -209,13 +176,6 @@ LIMITER = RateLimiter(REQUEST_INTERVAL)
 
 
 def with_retry(fn, *args, weight=1.0, **kwargs):
-    """Call fn, waiting out rate limits instead of giving up on the request.
-
-    A rate-limited request is retried after the cooldown and does not use up
-    its retry budget, so no app is dropped just because Google throttled us.
-    Raises BlockedError if throttling keeps repeating, NotFound errors
-    immediately, and other errors after MAX_RETRIES attempts.
-    """
     errors = 0
     while True:
         if LIMITER.blocked:
@@ -227,7 +187,7 @@ def with_retry(fn, *args, weight=1.0, **kwargs):
             if is_not_found(exc):
                 raise
             if LIMITER.failure(exc, started):
-                continue  # throttled: wait out the cooldown, retry the same request
+                continue
             errors += 1
             if errors >= MAX_RETRIES:
                 raise
@@ -235,10 +195,6 @@ def with_retry(fn, *args, weight=1.0, **kwargs):
         LIMITER.success()
         return result
 
-
-# --------------------------------------------------------------------------
-# helpers
-# --------------------------------------------------------------------------
 
 def normalize_downloads(real_installs, installs_str=""):
     if real_installs:
@@ -281,8 +237,6 @@ def days_since(date_obj):
 
 
 def qualifies(record):
-    """Same filters as build_dataframe, so the developer count we stop on
-    matches what ends up in the Excel file."""
     installs = normalize_downloads(record.get("realInstalls"), record.get("installs"))
     if installs < MIN_INSTALLS:
         return False
@@ -292,14 +246,7 @@ def qualifies(record):
     return age is None or age <= STALE_AFTER_DAYS
 
 
-# --------------------------------------------------------------------------
-# storage
-# --------------------------------------------------------------------------
-
 class Store:
-    """MongoDB-backed cache. Known apps and qualified developers are loaded
-    into memory once; writes are buffered and sent with bulk_write."""
-
     def __init__(self):
         uri = os.environ.get("MONGODB_URI")
         if not uri:
@@ -321,8 +268,6 @@ class Store:
         retry_count = 0
         for r in self.apps.find({}, {"package_name": 1, "payload": 1, "ok": 1, "_id": 0}):
             if r.get("ok") is False:
-                # Older runs stored rate-limited fetches as "failed" forever.
-                # Leave them out of `known` so they get fetched again.
                 retry_count += 1
                 continue
             self.known.add(r["package_name"])
@@ -356,8 +301,6 @@ class Store:
             self._buffer = []
 
     def phone_backfill_candidates(self):
-        """One app per qualifying developer whose stored data pre-dates phone
-        support (no `developerPhone` key on any of their apps)."""
         done = {str(d) for d in self.apps.distinct(
             "payload.developerId", {"payload.developerPhone": {"$exists": True}})}
         seen, packages = set(done), []
@@ -389,10 +332,6 @@ class Store:
         self.client.close()
 
 
-# --------------------------------------------------------------------------
-# fetching / discovery
-# --------------------------------------------------------------------------
-
 KEEP_FIELDS = (
     "title", "url", "appId", "realInstalls", "installs", "containsAds",
     "offersIAP", "genre", "genreId", "score", "ratings", "reviews",
@@ -402,11 +341,6 @@ KEEP_FIELDS = (
 )
 
 
-# The "About the developer / App support" data lives in dataset ds:5. The
-# library already reads website [1,2,69,0], email [1,2,69,1] and address
-# [1,2,69,2] from it but doesn't expose a phone number, so we scan the developer
-# blocks for a phone-looking string. Run `--inspect <package>` to see the raw
-# block if a phone that shows on the Play page isn't being picked up.
 DEV_DATASET = "ds:5"
 DEV_BLOCK_PATHS = ([1, 2, 69], [1, 2, 68])
 _PHONE_RE = re.compile(r"^\+?\(?\d[\d\s().\-]{5,18}\d$")
@@ -493,11 +427,10 @@ def fetch_many(package_names, store, country):
             try:
                 store.save(package_name, future.result(), ok=True)
             except BlockedError:
-                pass  # not saved -> will be retried on the next run
+                pass
             except Exception as exc:
                 if is_not_found(exc):
                     store.save(package_name, None, ok=False)
-                # any other error is treated as transient: not saved, retried later
 
 
 def run_discovery(store, target_devs, deadline, max_searches):
@@ -549,7 +482,7 @@ def run_discovery(store, target_devs, deadline, max_searches):
                 continue
             dev_id = str(result.get("developerId") or "")
             if dev_id and dev_id in store.qualified_devs:
-                continue  # already have this developer, skip the extra fetch
+                continue
             candidates.append(package_name)
 
         fetch_many(candidates, store, country)
@@ -567,7 +500,6 @@ def run_discovery(store, target_devs, deadline, max_searches):
 
 
 def backfill_phones(store, deadline, country):
-    """Re-fetch one app per developer that was saved before phone support."""
     todo = store.phone_backfill_candidates()
     print(f"\n{len(todo)} developers need a phone lookup (1 request each).")
     chunk = 200
@@ -583,7 +515,6 @@ def backfill_phones(store, deadline, country):
 
 
 def inspect_app(package_name, country):
-    """Print the raw developer block for one app so phone extraction can be checked."""
     if not RAW_AVAILABLE:
         raise SystemExit("This google_play_scraper version doesn't expose the raw page helpers.")
     url = Formats.Detail.build(app_id=package_name, lang=LANG, country=country)
@@ -594,10 +525,6 @@ def inspect_app(package_name, country):
         print(json.dumps(_dig(root, path), indent=2, ensure_ascii=False))
     print("\nDetected phone:", extract_developer_phone(dom) or "(none)")
 
-
-# --------------------------------------------------------------------------
-# scoring / export
-# --------------------------------------------------------------------------
 
 def lead_score(row):
     score = 0.0
@@ -809,7 +736,7 @@ def main():
         elif not args.export_only:
             run_discovery(store, args.target_devs, deadline, args.max_searches)
     finally:
-        store.flush()  # make sure buffered writes survive Ctrl+C / errors
+        store.flush()
 
     df = build_dataframe(store)
 
