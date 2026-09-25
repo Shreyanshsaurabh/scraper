@@ -46,94 +46,87 @@ MAX_STRIKES = 6
 RESULTS_PER_QUERY = 1000
 LANG = "en"
 MAX_SEARCHES = 10000
-SEARCH_COUNTRIES = ["tr", "ma", "eg"]
 
+# Added 'in' to country lists
+SEARCH_COUNTRIES = ["tr", "ma", "eg", "in"]
 MONGO_BATCH_SIZE = 100
 
+# Highly expanded base terms across various niches to farm more developers
 BASE_TERMS = [
-    # Business
-    "business planner", "business manager app", "startup app", "erp app",
-    "inventory management app", "receipt scanner", "tax calculator app",
-    "billing app", "freelance app", "client management app", "contract app",
-    "hr app", "attendance app", "delivery management app",
+    # Business & Finance
+    "business planner", "startup app", "erp app", "inventory management", 
+    "receipt scanner", "tax calculator", "billing app", "freelance app", 
+    "client management", "contract app", "hr app", "attendance app", 
+    "delivery tracking", "expense manager", "stock market", "insurance", 
+    "credit score", "savings", "bill payment", "tax filing", "crypto wallet", 
+    "bitcoin trading", "investment app", "invoice maker", "accounting app",
 
-    # Games
-    "puzzle games", "trivia games", "word games", "match games",
-    "farming games", "cooking games", "fighting games", "sports games",
-    "city building games", "idle clicker games", "escape room games",
-    "solitaire games", "chess games", "party games", "quiz games",
+    # Games (Hypercasual, Niche, & Core)
+    "puzzle games", "trivia games", "word games", "match 3 games",
+    "farming simulator", "cooking games", "fighting games", "sports games",
+    "city building", "idle clicker", "escape room", "solitaire", "chess", 
+    "party games", "quiz games", "hypercasual", "rpg games", "fps shooter",
+    "tower defense", "racing games", "car driving simulator", "truck simulator",
+    "casino games", "slots", "poker", "bingo", "hidden object", "arcade games",
+    "board games", "strategy games", "zombie survival", "multiplayer arena", 
+    "battle royale", "card games", "gacha games", "pet simulator",
 
-    # Entertainment
-    "streaming service app", "live streaming app", "podcast app",
-    "cartoon app", "drama series app", "movie streaming app",
-    "manga reader app", "funny videos app", "gif maker app",
-    "celebrity news app",
+    # Entertainment & Media
+    "streaming service", "live streaming", "podcast app", "cartoon app", 
+    "drama series", "movie streaming", "manga reader", "funny videos", 
+    "gif maker", "celebrity news", "anime streaming", "iptv player", 
+    "music player", "radio streaming", "audiobook app", "wallpaper 4k",
 
     # Utility & Tools
-    "system optimizer", "storage cleaner", "app manager", "screen mirroring app",
-    "call recorder app", "notes and reminders app", "unit converter app",
-    "wifi analyzer app", "data usage monitor", "password manager app",
-    "dual app cloner", "night mode screen filter", "text scanner app",
+    "system optimizer", "storage cleaner", "app manager", "screen mirroring",
+    "call recorder", "notes app", "unit converter", "wifi analyzer", 
+    "data usage monitor", "password manager", "dual app cloner", "night mode", 
+    "text scanner", "pdf reader", "qr scanner", "vpn free", "antivirus", 
+    "battery saver", "speed test app", "file manager", "auto clicker",
 
-    # Social
-    "friend finder app", "live chat rooms app", "anonymous social app",
-    "video sharing social app", "group app", "neighborhood app",
+    # Social & Dating
+    "friend finder", "live chat rooms", "anonymous social", "video sharing", 
+    "group chat app", "neighborhood app", "singles app", "flirt chat", 
+    "dating and chat", "blind date", "senior dating", "matrimony app", 
+    "hookup app", "voice chat rooms", "avatar maker",
 
-    # Dating
-    "singles app", "flirt chat app", "dating and chat app",
-    "relationship app", "blind date app", "senior dating app",
+    # Sports & Health/Fitness
+    "football live", "soccer scores", "basketball app", "tennis app", 
+    "gym workout planner", "step counter", "yoga app", "cycling tracker", 
+    "boxing training", "home workout", "weight loss app", "calorie counter", 
+    "intermittent fasting", "sleep tracker", "water reminder", "meditation app",
 
-    # Sports
-    "football live app", "soccer app", "basketball scores app",
-    "tennis app", "gym workout planner", "step counter app",
-    "yoga app", "cycling app tracker", "boxing training app",
+    # Travel & Navigation
+    "flight tracker", "airport app", "road trip planner", "public transport", 
+    "currency converter", "visa guide", "camping app", "travel expense", 
+    "gps navigation", "offline maps", "hotel booking", "car rental app",
 
-    # Travel
-    "flight tracker app", "airport app", "road trip planner",
-    "public transport app", "currency converter app", "visa guide app",
-    "camping app", "travel expense app",
+    # Lifestyle & Productivity
+    "diet app", "skincare app", "makeup app", "interior design", "gardening app", 
+    "parenting app", "self care app", "focus timer", "habit tracker", 
+    "voice recorder", "email organizer", "document scanner", "mind map", 
+    "goal tracker", "study planner", "to do list", "pomodoro timer",
 
-    # Lifestyle
-    "diet app", "skincare app", "makeup app", "interior design app",
-    "gardening app", "parenting app", "meditation app", "self care app",
+    # Photography & Video
+    "portrait editor", "background eraser", "photo grid", "video to photo", 
+    "old photo restore", "polaroid camera", "hd video player", "status saver", 
+    "gif downloader", "video compressor", "video editor", "screen recorder", 
+    "beauty camera", "collage maker", "vlog editor",
 
-    # Productivity
-    "focus timer app", "habit tracker app", "voice recorder app",
-    "email organizer app", "document scanner app", "mind map app",
-    "goal tracker app", "study planner app",
+    # Education & Learning
+    "language learning", "math solver", "dictionary app", "flashcards app", 
+    "coding courses", "driving test app", "brain training", "kids learning app", 
 
-    # Video Players & Downloader
-    "hd video player", "status saver app", "gif downloader app",
-    "video compressor app", "video editor app", "screen recorder video app",
-
-    # Communication
-    "conference call app", "walkie talkie app", "text messaging app",
-    "contacts backup app", "caller id app", "fax app",
-
-    # Finance
-    "expense manager app", "stock market app", "insurance app",
-    "credit score app", "savings app", "bill payment app", "tax filing app",
-
-    # Reward
-    "loyalty app", "daily rewards app", "coupon app", "promo code app",
-    "points redeem app",
-
-    # Photography
-    "portrait editor app", "background eraser app", "photo grid app",
-    "video to photo app", "old photo restore app", "polaroid camera app",
-
-    # News
-    "world news app", "sports news headlines app", "finance news app",
-    "weather and news app", "magazine app",
-
-    # Music
-    "beat maker app", "song identifier app", "guitar tuner app",
-    "ringtone maker app", "audio mixer app", "podcast and music app",
+    # AI & Trending Tech
+    "ai chatbot", "ai image generator", "ai writer", "ai avatar", "chatgpt app", 
+    "ai voice generator", "ai homework helper"
 ]
 
+# Expanded Modifiers for higher permutation yield
 MODIFIERS = [
     "", "app", "free download", "premium", "no ads", "latest version",
-    "new", "top rated",
+    "new", "top rated", "pro", "lite", "online", "multiplayer", "3d", 
+    "simulator", "tracker", "2024", "for android", "hd"
 ]
 
 SEARCH_QUERIES = sorted({
@@ -276,6 +269,7 @@ def days_since(date_obj):
 
 
 def qualifies(record):
+    """This function determines if an app meets the baseline to count towards TARGET_DEVELOPERS."""
     installs = normalize_downloads(record.get("realInstalls"), record.get("installs"))
     if installs < MIN_INSTALLS:
         return False
@@ -320,12 +314,15 @@ class Store:
         self.known.add(package_name)
         if ok and payload and payload.get("developerId") and qualifies(payload):
             self.qualified_devs.add(str(payload["developerId"]))
+            
+        country = payload.get("search_country") if payload else None
 
         self._buffer.append(UpdateOne(
             {"package_name": package_name},
             {"$set": {
                 "package_name": package_name,
                 "payload": payload,
+                "country": country,
                 "ok": bool(ok),
                 "fetched_at": time.time(),
             }},
@@ -452,7 +449,10 @@ def fetch_details(package_name, country):
 
 def fetch_one(package_name, country):
     details = with_retry(fetch_details, package_name, country)
-    return {k: details.get(k) for k in KEEP_FIELDS}
+    payload = {k: details.get(k) for k in KEEP_FIELDS}
+    # Track the country inside the payload directly
+    payload["search_country"] = country
+    return payload
 
 
 def fetch_many(package_names, store, country):
@@ -616,6 +616,7 @@ def build_dataframe(store):
             "Developer Website": record.get("developerWebsite") or "",
             "Developer Address": record.get("developerAddress") or "",
             "Developer ID": str(record.get("developerId") or ""),
+            "Country": record.get("search_country") or "",
             "App Name": record.get("title") or "",
             "App Link": record.get("url")
                         or f"https://play.google.com/store/apps/details?id={package_name}",
@@ -645,20 +646,6 @@ def build_dataframe(store):
     ).reset_index(drop=True)
 
     return df
-
-
-def meets_criteria(row):
-    """Same qualifying bar used during discovery (installs / ads / freshness),
-    applied here only to decide what goes into the Hot Leads and Developers
-    sheets. The All Apps sheet is never filtered by this."""
-    if row["Downloads"] < MIN_INSTALLS:
-        return False
-    if row["Contains Ads"] != "Yes":
-        return False
-    age = row["Days Since Update"]
-    if age is not None and not pd.isna(age) and age > STALE_AFTER_DAYS:
-        return False
-    return True
 
 
 def first_non_empty(series):
@@ -736,10 +723,9 @@ def autoformat(worksheet, df, link_column=None):
 
 
 def export(df):
-    qualified = df[df.apply(meets_criteria, axis=1)]
-
-    developers = build_developer_sheet(qualified)
-    hot = qualified[(qualified["Lead Score"] >= 60) & (qualified["Developer Email"] != "")]
+    # Developers and All Apps sheets now receive the unfiltered 'df' dataset
+    developers = build_developer_sheet(df)
+    hot = df[(df["Lead Score"] >= 60) & (df["Developer Email"] != "")]
 
     with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
         hot.to_excel(writer, sheet_name="Hot Leads", index=False)
