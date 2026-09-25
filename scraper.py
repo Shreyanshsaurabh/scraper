@@ -29,7 +29,7 @@ except ImportError:
 OUTPUT_FILE = "puzzle.xlsx"
 DB_NAME = os.environ.get("MONGODB_DB", "db3")
 
-TARGET_DEVELOPERS = 10_000
+TARGET_DEVELOPERS = 15_000
 STALE_AFTER_DAYS = 1460
 MIN_INSTALLS = 10_000
 MAX_RUNTIME_MINUTES = 330
@@ -43,58 +43,97 @@ MAX_COOLDOWN = 240
 MAX_INTERVAL = 4.0
 MAX_STRIKES = 6
 
-RESULTS_PER_QUERY = 250
+RESULTS_PER_QUERY = 1000
 LANG = "en"
-MAX_SEARCHES = 10
-SEARCH_COUNTRIES = ["in"]
+MAX_SEARCHES = 10000
+SEARCH_COUNTRIES = ["tr", "ma", "eg"]
 
 MONGO_BATCH_SIZE = 100
 
 BASE_TERMS = [
-    "puzzle", "puzzle game", "brain teaser", "brain training", "brain game", "brain puzzle",
-    "brain test", "brain out", "tricky puzzle", "logic puzzle", "logic game", "logic riddles",
-    "match 3", "match puzzle", "match 3 adventure", "block puzzle", "block game", "block blast",
-    "woodoku", "wood puzzle", "hexa puzzle", "hexa sort", "tile puzzle", "tile match",
-    "tile connect", "triple tile", "triple match", "merge puzzle", "number merge", "color puzzle",
-    "color match", "color sort", "sorting puzzle", "ball sort", "water sort", "bottle sort",
-    "tube sort", "number sort", "screw puzzle", "nuts and bolts", "jigsaw", "jigsaw puzzle",
-    "jigsaw for kids", "jigsaw for adults", "photo puzzle", "art puzzle", "landscape jigsaw",
-    "tangram", "sliding puzzle", "slide puzzle", "sliding block", "15 puzzle", "sliding tile",
-    "sudoku", "sudoku classic", "sudoku 9x9", "killer sudoku", "kakuro", "nonogram", "minesweeper",
-    "crossword", "crossword puzzle", "codeword", "cryptogram", "acrostic",
-    "word puzzle", "word game", "word search", "word connect", "word cookies", "word crush",
-    "word blocks", "word stack", "word scramble", "word ladder", "wordle", "hangman",
-    "anagram", "guess the word", "guess the picture", "4 pics", "spelling game",
-    "vocabulary game", "alphabet game", "number puzzle", "number game", "number match", "2048",
-    "math puzzle", "math game", "math quiz", "mental math", "multiplication game",
-    "quiz", "quiz game", "trivia", "trivia game", "general knowledge quiz", "IQ test", "riddle",
-    "riddle game", "memory game", "memory match", "matching pairs", "pair game", "memory training",
-    "concentration game", "focus game", "reflex game", "thinking game", "mind game",
-    "hidden object", "hidden objects mystery", "find hidden objects", "hidden numbers",
-    "seek and find", "spot the difference", "find the difference", "connect dots", "one line",
-    "draw puzzle", "draw to save", "maze", "labyrinth", "escape room", "escape game",
-    "room escape", "escape puzzle", "escape adventure", "point and click", "adventure puzzle",
-    "story puzzle", "mystery puzzle", "detective puzzle", "detective game", "murder mystery",
-    "pipe puzzle", "flow puzzle", "physics puzzle", "physics game", "rope puzzle", "cut the rope",
-    "chain reaction", "bubble shooter", "bubble puzzle", "bubble pop", "marble shooter", "marble",
-    "zuma", "rolling ball", "stack game", "tower building", "unblock puzzle", "unblock car",
-    "parking puzzle", "traffic puzzle", "puzzle platformer",
-    "mahjong", "mahjong solitaire", "mahjong connect", "onet", "solitaire", "spider solitaire",
-    "freecell", "klondike", "tetris", "brick breaker", "chess", "chess puzzle", "chess offline",
-    "checkers", "reversi", "othello", "connect four", "gomoku", "tic tac toe", "sokoban",
-    "dominoes", "domino puzzle", "ludo", "carrom", "snakes and ladders", "card game", "rummy",
-    "blackjack", "strategy puzzle", "tower defense puzzle",
-    "casual game", "arcade game", "hyper casual", "idle game", "clicker game", "gem match",
-    "jewel match", "fruit match", "fruit crush", "diamond match", "candy match", "pop it",
-    "3d puzzle", "shape puzzle", "pattern puzzle", "kids puzzle", "educational puzzle",
-    "toddler puzzle", "baby puzzle", "animal puzzle", "car puzzle", "preschool game",
-    "kids learning game", "educational game", "coloring book", "color by number",
-    "paint by number", "pixel art", "drawing game", "diamond painting", "puzzle for adults",
+    # Business
+    "business planner", "business manager app", "startup app", "erp app",
+    "inventory management app", "receipt scanner", "tax calculator app",
+    "billing app", "freelance app", "client management app", "contract app",
+    "hr app", "attendance app", "delivery management app",
+
+    # Games
+    "puzzle games", "trivia games", "word games", "match games",
+    "farming games", "cooking games", "fighting games", "sports games",
+    "city building games", "idle clicker games", "escape room games",
+    "solitaire games", "chess games", "party games", "quiz games",
+
+    # Entertainment
+    "streaming service app", "live streaming app", "podcast app",
+    "cartoon app", "drama series app", "movie streaming app",
+    "manga reader app", "funny videos app", "gif maker app",
+    "celebrity news app",
+
+    # Utility & Tools
+    "system optimizer", "storage cleaner", "app manager", "screen mirroring app",
+    "call recorder app", "notes and reminders app", "unit converter app",
+    "wifi analyzer app", "data usage monitor", "password manager app",
+    "dual app cloner", "night mode screen filter", "text scanner app",
+
+    # Social
+    "friend finder app", "live chat rooms app", "anonymous social app",
+    "video sharing social app", "group app", "neighborhood app",
+
+    # Dating
+    "singles app", "flirt chat app", "dating and chat app",
+    "relationship app", "blind date app", "senior dating app",
+
+    # Sports
+    "football live app", "soccer app", "basketball scores app",
+    "tennis app", "gym workout planner", "step counter app",
+    "yoga app", "cycling app tracker", "boxing training app",
+
+    # Travel
+    "flight tracker app", "airport app", "road trip planner",
+    "public transport app", "currency converter app", "visa guide app",
+    "camping app", "travel expense app",
+
+    # Lifestyle
+    "diet app", "skincare app", "makeup app", "interior design app",
+    "gardening app", "parenting app", "meditation app", "self care app",
+
+    # Productivity
+    "focus timer app", "habit tracker app", "voice recorder app",
+    "email organizer app", "document scanner app", "mind map app",
+    "goal tracker app", "study planner app",
+
+    # Video Players & Downloader
+    "hd video player", "status saver app", "gif downloader app",
+    "video compressor app", "video editor app", "screen recorder video app",
+
+    # Communication
+    "conference call app", "walkie talkie app", "text messaging app",
+    "contacts backup app", "caller id app", "fax app",
+
+    # Finance
+    "expense manager app", "stock market app", "insurance app",
+    "credit score app", "savings app", "bill payment app", "tax filing app",
+
+    # Reward
+    "loyalty app", "daily rewards app", "coupon app", "promo code app",
+    "points redeem app",
+
+    # Photography
+    "portrait editor app", "background eraser app", "photo grid app",
+    "video to photo app", "old photo restore app", "polaroid camera app",
+
+    # News
+    "world news app", "sports news headlines app", "finance news app",
+    "weather and news app", "magazine app",
+
+    # Music
+    "beat maker app", "song identifier app", "guitar tuner app",
+    "ringtone maker app", "audio mixer app", "podcast and music app",
 ]
 
 MODIFIERS = [
-    "", "game", "games", "app", "free", "offline", "online", "multiplayer",
-    "for kids", "no wifi", "classic", "3d",
+    "", "app", "free download", "premium", "no ads", "latest version",
+    "new", "top rated",
 ]
 
 SEARCH_QUERIES = sorted({
@@ -599,15 +638,6 @@ def build_dataframe(store):
         return df
 
     df = df.drop_duplicates(subset=["Package Name"])
-    df = df[df["Downloads"] >= MIN_INSTALLS]
-    df = df[df["Contains Ads"] == "Yes"]
-    df = df[
-        df["Days Since Update"].isna()
-        | (df["Days Since Update"] <= STALE_AFTER_DAYS)
-    ]
-
-    if df.empty:
-        return df
 
     df["Lead Score"] = df.apply(lead_score, axis=1)
     df = df.sort_values(
@@ -615,6 +645,20 @@ def build_dataframe(store):
     ).reset_index(drop=True)
 
     return df
+
+
+def meets_criteria(row):
+    """Same qualifying bar used during discovery (installs / ads / freshness),
+    applied here only to decide what goes into the Hot Leads and Developers
+    sheets. The All Apps sheet is never filtered by this."""
+    if row["Downloads"] < MIN_INSTALLS:
+        return False
+    if row["Contains Ads"] != "Yes":
+        return False
+    age = row["Days Since Update"]
+    if age is not None and not pd.isna(age) and age > STALE_AFTER_DAYS:
+        return False
+    return True
 
 
 def first_non_empty(series):
@@ -692,8 +736,10 @@ def autoformat(worksheet, df, link_column=None):
 
 
 def export(df):
-    developers = build_developer_sheet(df)
-    hot = df[(df["Lead Score"] >= 60) & (df["Developer Email"] != "")]
+    qualified = df[df.apply(meets_criteria, axis=1)]
+
+    developers = build_developer_sheet(qualified)
+    hot = qualified[(qualified["Lead Score"] >= 60) & (qualified["Developer Email"] != "")]
 
     with pd.ExcelWriter(OUTPUT_FILE, engine="openpyxl") as writer:
         hot.to_excel(writer, sheet_name="Hot Leads", index=False)
